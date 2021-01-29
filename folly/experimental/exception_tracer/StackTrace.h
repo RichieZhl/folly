@@ -1,11 +1,11 @@
 /*
- * Copyright 2012-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,6 +19,8 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+
+#include <folly/Portability.h>
 
 namespace folly {
 namespace exception_tracer {
@@ -67,36 +69,32 @@ class StackTraceStack {
    * Is the stack empty?
    */
   bool empty() const {
-    return !top_;
+    return !state_[kTopIdx];
   }
 
   /**
    * Return the top stack trace, or nullptr if the stack is empty.
    */
   StackTrace* top();
+  const StackTrace* top() const;
 
   /**
    * Return the stack trace following p, or nullptr if p is the bottom of
    * the stack.
    */
   StackTrace* next(StackTrace* p);
+  const StackTrace* next(const StackTrace* p) const;
 
  private:
+  static constexpr size_t kTopIdx = kIsDebug ? 1 : 0;
+
   // In debug mode, we assert that we're in zero-initialized memory by
-  // checking that the two guards around top_ are zero.
+  // checking that the two guards around the Node* from top() are zero.
   void checkGuard() const {
-#ifndef NDEBUG
-    assert(guard1_ == 0 && guard2_ == 0);
-#endif
+    assert(state_[0] == 0 && state_[2] == 0);
   }
 
-#ifndef NDEBUG
-  uintptr_t guard1_;
-#endif
-  Node* top_;
-#ifndef NDEBUG
-  uintptr_t guard2_;
-#endif
+  Node* state_[kIsDebug ? 3 : 1];
 };
 } // namespace exception_tracer
 } // namespace folly

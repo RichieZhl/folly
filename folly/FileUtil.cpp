@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,6 +22,7 @@
 #include <vector>
 
 #include <folly/detail/FileUtilDetail.h>
+#include <folly/net/NetOps.h>
 #include <folly/portability/Fcntl.h>
 #include <folly/portability/Sockets.h>
 #include <folly/portability/Stdlib.h>
@@ -36,8 +37,7 @@ int openNoInt(const char* name, int flags, mode_t mode) {
   return int(wrapNoInt(open, name, flags, mode));
 }
 
-int closeNoInt(int fd) {
-  int r = close(fd);
+static int filterCloseReturn(int r) {
   // Ignore EINTR.  On Linux, close() may only return EINTR after the file
   // descriptor has been closed, so you must not retry close() on EINTR --
   // in the best case, you'll get EBADF, and in the worst case, you'll end up
@@ -48,9 +48,17 @@ int closeNoInt(int fd) {
   // case, the safe thing to do is also not to retry close() -- leaking a file
   // descriptor is definitely better than closing the wrong file.
   if (r == -1 && errno == EINTR) {
-    r = 0;
+    return 0;
   }
   return r;
+}
+
+int closeNoInt(int fd) {
+  return filterCloseReturn(close(fd));
+}
+
+int closeNoInt(NetworkSocket fd) {
+  return filterCloseReturn(netops::close(fd));
 }
 
 int fsyncNoInt(int fd) {
@@ -87,8 +95,8 @@ int flockNoInt(int fd, int operation) {
   return int(wrapNoInt(flock, fd, operation));
 }
 
-int shutdownNoInt(int fd, int how) {
-  return int(wrapNoInt(portability::sockets::shutdown, fd, how));
+int shutdownNoInt(NetworkSocket fd, int how) {
+  return int(wrapNoInt(netops::shutdown, fd, how));
 }
 
 ssize_t readNoInt(int fd, void* buf, size_t count) {
@@ -103,6 +111,10 @@ ssize_t readvNoInt(int fd, const iovec* iov, int count) {
   return wrapNoInt(readv, fd, iov, count);
 }
 
+ssize_t preadvNoInt(int fd, const iovec* iov, int count, off_t offset) {
+  return wrapNoInt(preadv, fd, iov, count, offset);
+}
+
 ssize_t writeNoInt(int fd, const void* buf, size_t count) {
   return wrapNoInt(write, fd, buf, count);
 }
@@ -113,6 +125,10 @@ ssize_t pwriteNoInt(int fd, const void* buf, size_t count, off_t offset) {
 
 ssize_t writevNoInt(int fd, const iovec* iov, int count) {
   return wrapNoInt(writev, fd, iov, count);
+}
+
+ssize_t pwritevNoInt(int fd, const iovec* iov, int count, off_t offset) {
+  return wrapNoInt(pwritev, fd, iov, count, offset);
 }
 
 ssize_t readFull(int fd, void* buf, size_t count) {

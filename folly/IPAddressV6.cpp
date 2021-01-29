@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,7 +25,7 @@
 #include <folly/MacAddress.h>
 #include <folly/detail/IPAddressSource.h>
 
-#if !_WIN32
+#ifndef _WIN32
 #include <net/if.h>
 #else
 // Because of the massive pain that is libnl, this can't go into the socket
@@ -67,7 +67,7 @@ bool IPAddressV6::validate(StringPiece ip) noexcept {
 }
 
 // public default constructor
-IPAddressV6::IPAddressV6() {}
+IPAddressV6::IPAddressV6() = default;
 
 // public string constructor
 IPAddressV6::IPAddressV6(StringPiece addr) {
@@ -498,7 +498,7 @@ uint8_t IPAddressV6::getNthMSByte(size_t byteIndex) const {
 }
 
 // protected
-const ByteArray16 IPAddressV6::fetchMask(size_t numBits) {
+ByteArray16 IPAddressV6::fetchMask(size_t numBits) {
   static const size_t bits = bitCount();
   if (numBits > bits) {
     throw IPAddressFormatException("IPv6 addresses are 128 bits.");

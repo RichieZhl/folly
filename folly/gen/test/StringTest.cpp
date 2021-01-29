@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,11 +25,8 @@
 using namespace folly::gen;
 using namespace folly;
 using std::make_tuple;
-using std::ostream;
-using std::pair;
 using std::string;
 using std::tuple;
-using std::unique_ptr;
 using std::vector;
 
 using vec = vector<string>;
@@ -182,6 +179,21 @@ TEST(StringGen, EachToTuple) {
     auto actual
       = split(lines, ' ')
       | eachToTuple<int, StringPiece>(':')
+      | as<vector>();
+    // clang-format on
+    vector<tuple<int, StringPiece>> expected{
+        make_tuple(1, "cat"),
+        make_tuple(2, "dog"),
+    };
+    EXPECT_EQ(expected, actual);
+  }
+  {
+    // StringPiece target
+    auto lines = "1::cat 2::dog";
+    // clang-format off
+    auto actual
+      = split(lines, ' ')
+      | eachToTuple<int, StringPiece>("::")
       | as<vector>();
     // clang-format on
     vector<tuple<int, StringPiece>> expected{

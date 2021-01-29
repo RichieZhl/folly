@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,7 +26,7 @@ using namespace folly;
 namespace {
 
 /***
- *  The basic premise is to check that the callback passed to then or onError
+ *  The basic premise is to check that the callback passed to then or thenError
  *  is destructed before wait returns on the resulting future.
  *
  *  The approach is to use callbacks where the destructor sleeps 500ms and then
@@ -102,110 +102,123 @@ TEST_F(CallbackLifetimeTest, thenReturnsFutureThrows) {
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesExnReturnsValueMatch) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesExnReturnsValueMatch) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](std::exception&) {})
+      .thenError(folly::tag_t<std::exception>{}, [_ = mkCGuard(c)](auto&&) {})
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesExnReturnsValueMatchThrows) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesExnReturnsValueMatchThrows) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](std::exception&) { raise(); })
+      .thenError(
+          folly::tag_t<std::exception>{},
+          [_ = mkCGuard(c)](auto&&) { raise(); })
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesExnReturnsValueWrong) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesExnReturnsValueWrong) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](std::logic_error&) {})
+      .thenError(folly::tag_t<std::logic_error>{}, [_ = mkCGuard(c)](auto&&) {})
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesExnReturnsValueWrongThrows) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesExnReturnsValueWrongThrows) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](std::logic_error&) { raise(); })
+      .thenError(
+          folly::tag_t<std::logic_error>{},
+          [_ = mkCGuard(c)](auto&&) { raise(); })
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesExnReturnsFutureMatch) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesExnReturnsFutureMatch) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](std::exception&) { return makeFuture(); })
+      .thenError(
+          folly::tag_t<std::exception>{},
+          [_ = mkCGuard(c)](auto&&) { return makeFuture(); })
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesExnReturnsFutureMatchThrows) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesExnReturnsFutureMatchThrows) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](std::exception&) { return raiseFut(); })
+      .thenError(
+          folly::tag_t<std::exception>{},
+          [_ = mkCGuard(c)](auto&&) { return raiseFut(); })
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesExnReturnsFutureWrong) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesExnReturnsFutureWrong) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](std::logic_error&) { return makeFuture(); })
+      .thenError(
+          folly::tag_t<std::logic_error>{},
+          [_ = mkCGuard(c)](auto&&) { return makeFuture(); })
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesExnReturnsFutureWrongThrows) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesExnReturnsFutureWrongThrows) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](std::logic_error&) { return raiseFut(); })
+      .thenError(
+          folly::tag_t<std::logic_error>{},
+          [_ = mkCGuard(c)](auto&&) { return raiseFut(); })
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesWrapReturnsValue) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesWrapReturnsValue) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](exception_wrapper&&) {})
+      .thenError([_ = mkCGuard(c)](exception_wrapper&&) {})
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesWrapReturnsValueThrows) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesWrapReturnsValueThrows) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](exception_wrapper&&) { raise(); })
+      .thenError([_ = mkCGuard(c)](exception_wrapper&&) { raise(); })
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesWrapReturnsFuture) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesWrapReturnsFuture) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](exception_wrapper&&) { return makeFuture(); })
+      .thenError(
+          [_ = mkCGuard(c)](exception_wrapper&&) { return makeFuture(); })
       .wait();
   EXPECT_EQ(1, *c);
 }
 
-TEST_F(CallbackLifetimeTest, onErrorTakesWrapReturnsFutureThrows) {
+TEST_F(CallbackLifetimeTest, thenErrorTakesWrapReturnsFutureThrows) {
   auto c = mkC();
   via(&executor)
       .thenValue(raise)
-      .onError([_ = mkCGuard(c)](exception_wrapper&&) { return raiseFut(); })
+      .thenError([_ = mkCGuard(c)](exception_wrapper&&) { return raiseFut(); })
       .wait();
   EXPECT_EQ(1, *c);
 }

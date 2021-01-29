@@ -1,11 +1,11 @@
 /*
- * Copyright 2016-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,6 +19,7 @@
 #include <future>
 
 #include <folly/Executor.h>
+#include <folly/Function.h>
 #include <folly/Synchronized.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/synchronization/Baton.h>
@@ -60,7 +61,8 @@ class VirtualEventBase : public folly::Executor, public folly::TimeoutManager {
    * Note: this will be called from the loop of the EventBase, backing this
    * VirtualEventBase
    */
-  void runOnDestruction(EventBase::LoopCallback* callback);
+  void runOnDestruction(EventBase::OnDestructionCallback& callback);
+  void runOnDestruction(Func f);
 
   /**
    * VirtualEventBase destructor blocks until all tasks scheduled through its
@@ -69,13 +71,12 @@ class VirtualEventBase : public folly::Executor, public folly::TimeoutManager {
    * @see EventBase::runInEventBaseThread
    */
   template <typename F>
-  void runInEventBaseThread(F&& f) {
+  void runInEventBaseThread(F&& f) noexcept {
     // KeepAlive token has to be released in the EventBase thread. If
     // runInEventBaseThread() fails, we can't extract the KeepAlive token
     // from the callback to properly release it.
-    CHECK(evb_->runInEventBaseThread(
-        [keepAliveToken = getKeepAliveToken(this),
-         f = std::forward<F>(f)]() mutable { f(); }));
+    evb_->runInEventBaseThread([keepAliveToken = getKeepAliveToken(this),
+                                f = std::forward<F>(f)]() mutable { f(); });
   }
 
   HHWheelTimer& timer() {
@@ -122,9 +123,9 @@ class VirtualEventBase : public folly::Executor, public folly::TimeoutManager {
 
  protected:
   bool keepAliveAcquire() override {
-    DCHECK(loopKeepAliveCount_ + loopKeepAliveCountAtomic_.load() > 0);
-
     if (evb_->inRunningEventBaseThread()) {
+      DCHECK(loopKeepAliveCount_ + loopKeepAliveCountAtomic_.load() > 0);
+
       ++loopKeepAliveCount_;
     } else {
       ++loopKeepAliveCountAtomic_;
@@ -132,10 +133,7 @@ class VirtualEventBase : public folly::Executor, public folly::TimeoutManager {
     return true;
   }
 
-  void keepAliveRelease() override {
-    if (!evb_->inRunningEventBaseThread()) {
-      return evb_->add([=] { keepAliveRelease(); });
-    }
+  void keepAliveReleaseEvb() {
     if (loopKeepAliveCountAtomic_.load()) {
       loopKeepAliveCount_ += loopKeepAliveCountAtomic_.exchange(0);
     }
@@ -143,6 +141,15 @@ class VirtualEventBase : public folly::Executor, public folly::TimeoutManager {
     if (--loopKeepAliveCount_ == 0) {
       destroyImpl();
     }
+  }
+
+  void keepAliveRelease() override {
+    if (!evb_->inRunningEventBaseThread()) {
+      evb_->add([=] { keepAliveReleaseEvb(); });
+      return;
+    }
+
+    keepAliveReleaseEvb();
   }
 
  private:
@@ -169,6 +176,6 @@ class VirtualEventBase : public folly::Executor, public folly::TimeoutManager {
   KeepAlive<VirtualEventBase> loopKeepAlive_{
       makeKeepAlive<VirtualEventBase>(this)};
 
-  folly::Synchronized<LoopCallbackList> onDestructionCallbacks_;
+  Synchronized<EventBase::OnDestructionCallback::List> onDestructionCallbacks_;
 };
 } // namespace folly

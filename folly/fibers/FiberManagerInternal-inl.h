@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <cassert>
@@ -43,6 +44,11 @@ inline FiberManager::Options preprocessOptions(FiberManager::Options opts) {
    */
   opts.stackSize *= std::exchange(opts.stackSizeMultiplier, 1);
   return opts;
+}
+
+template <class F>
+FOLLY_NOINLINE invoke_result_t<F> runNoInline(F&& func) {
+  return func();
 }
 
 } // namespace
@@ -179,7 +185,7 @@ inline void FiberManager::runReadyFiber(Fiber* fiber) {
     currentFiber_ = nullptr;
     fiber->rcontext_ = RequestContext::saveContext();
     fiber->state_ = Fiber::READY_TO_RUN;
-    yieldedFibers_.push_back(*fiber);
+    yieldedFibers_->push_back(*fiber);
   }
 }
 
@@ -187,7 +193,8 @@ inline void FiberManager::loopUntilNoReady() {
   return loopController_->runLoop();
 }
 
-inline void FiberManager::loopUntilNoReadyImpl() {
+template <typename LoopFunc>
+void FiberManager::runFibersHelper(LoopFunc&& loopFunc) {
 #ifndef _WIN32
   if (UNLIKELY(!alternateSignalStackRegistered_)) {
     registerAlternateSignalStack();
@@ -195,17 +202,28 @@ inline void FiberManager::loopUntilNoReadyImpl() {
 #endif
 
   // Support nested FiberManagers
-  auto originalFiberManager = this;
-  std::swap(currentFiberManager_, originalFiberManager);
+  auto originalFiberManager = std::exchange(currentFiberManager_, this);
+
+  numUncaughtExceptions_ = uncaught_exceptions();
+  currentException_ = std::current_exception();
 
   // Save current context, and reset it after executing all fibers.
   // This can avoid a lot of context swapping,
   // if the Fibers share the same context
   auto curCtx = RequestContext::saveContext();
 
+  FiberTailQueue yieldedFibers;
+  auto prevYieldedFibers = std::exchange(yieldedFibers_, &yieldedFibers);
+
   SCOPE_EXIT {
+    yieldedFibers_ = prevYieldedFibers;
+    if (observer_) {
+      for (auto& yielded : yieldedFibers) {
+        observer_->runnable(reinterpret_cast<uintptr_t>(&yielded));
+      }
+    }
+    readyFibers_.splice(readyFibers_.end(), yieldedFibers);
     RequestContext::setContext(std::move(curCtx));
-    isLoopScheduled_ = false;
     if (!readyFibers_.empty()) {
       ensureLoopScheduled();
     }
@@ -213,50 +231,63 @@ inline void FiberManager::loopUntilNoReadyImpl() {
     CHECK_EQ(this, originalFiberManager);
   };
 
-  bool hadRemote = true;
-  while (hadRemote) {
-    while (!readyFibers_.empty()) {
-      auto& fiber = readyFibers_.front();
-      readyFibers_.pop_front();
-      runReadyFiber(&fiber);
+  loopFunc();
+}
+
+inline void FiberManager::loopUntilNoReadyImpl() {
+  runFibersHelper([&] {
+    SCOPE_EXIT {
+      isLoopScheduled_ = false;
+    };
+
+    bool hadRemote = true;
+    while (hadRemote) {
+      while (!readyFibers_.empty()) {
+        auto& fiber = readyFibers_.front();
+        readyFibers_.pop_front();
+        runReadyFiber(&fiber);
+      }
+
+      auto hadRemoteFiber = remoteReadyQueue_.sweepOnce(
+          [this](Fiber* fiber) { runReadyFiber(fiber); });
+
+      if (hadRemoteFiber) {
+        ++remoteCount_;
+      }
+
+      auto hadRemoteTask =
+          remoteTaskQueue_.sweepOnce([this](RemoteTask* taskPtr) {
+            std::unique_ptr<RemoteTask> task(taskPtr);
+            auto fiber = getFiber();
+            if (task->localData) {
+              fiber->localData_ = *task->localData;
+            }
+            fiber->rcontext_ = std::move(task->rcontext);
+
+            fiber->setFunction(std::move(task->func));
+            if (observer_) {
+              observer_->runnable(reinterpret_cast<uintptr_t>(fiber));
+            }
+            runReadyFiber(fiber);
+          });
+
+      if (hadRemoteTask) {
+        ++remoteCount_;
+      }
+
+      hadRemote = hadRemoteTask || hadRemoteFiber;
     }
+  });
+}
 
-    auto hadRemoteFiber = remoteReadyQueue_.sweepOnce(
-        [this](Fiber* fiber) { runReadyFiber(fiber); });
-
-    if (hadRemoteFiber) {
-      ++remoteCount_;
-    }
-
-    auto hadRemoteTask =
-        remoteTaskQueue_.sweepOnce([this](RemoteTask* taskPtr) {
-          std::unique_ptr<RemoteTask> task(taskPtr);
-          auto fiber = getFiber();
-          if (task->localData) {
-            fiber->localData_ = *task->localData;
-          }
-          fiber->rcontext_ = std::move(task->rcontext);
-
-          fiber->setFunction(std::move(task->func));
-          if (observer_) {
-            observer_->runnable(reinterpret_cast<uintptr_t>(fiber));
-          }
-          runReadyFiber(fiber);
-        });
-
-    if (hadRemoteTask) {
-      ++remoteCount_;
-    }
-
-    hadRemote = hadRemoteTask || hadRemoteFiber;
-  }
-
-  if (observer_) {
-    for (auto& yielded : yieldedFibers_) {
-      observer_->runnable(reinterpret_cast<uintptr_t>(&yielded));
-    }
-  }
-  readyFibers_.splice(readyFibers_.end(), yieldedFibers_);
+inline void FiberManager::runEagerFiber(Fiber* fiber) {
+  runInMainContext([&] {
+    auto prevCurrentFiber = std::exchange(currentFiber_, fiber);
+    SCOPE_EXIT {
+      currentFiber_ = prevCurrentFiber;
+    };
+    runFibersHelper([&] { runReadyFiber(fiber); });
+  });
 }
 
 inline bool FiberManager::shouldRunLoopRemote() {
@@ -303,7 +334,7 @@ struct FiberManager::AddTaskHelper {
 };
 
 template <typename F>
-void FiberManager::addTask(F&& func) {
+Fiber* FiberManager::createTask(F&& func) {
   typedef AddTaskHelper<F> Helper;
 
   auto fiber = getFiber();
@@ -320,12 +351,22 @@ void FiberManager::addTask(F&& func) {
     fiber->setFunction(std::ref(*funcLoc));
   }
 
-  readyFibers_.push_back(*fiber);
   if (observer_) {
     observer_->runnable(reinterpret_cast<uintptr_t>(fiber));
   }
 
+  return fiber;
+}
+
+template <typename F>
+void FiberManager::addTask(F&& func) {
+  readyFibers_.push_back(*createTask(std::forward<F>(func)));
   ensureLoopScheduled();
+}
+
+template <typename F>
+void FiberManager::addTaskEager(F&& func) {
+  runEagerFiber(createTask(std::forward<F>(func)));
 }
 
 template <typename F>
@@ -414,7 +455,7 @@ struct FiberManager::AddTaskFinallyHelper {
 };
 
 template <typename F, typename G>
-void FiberManager::addTaskFinally(F&& func, G&& finally) {
+Fiber* FiberManager::createTaskFinally(F&& func, G&& finally) {
   typedef invoke_result_t<F> Result;
 
   static_assert(
@@ -453,18 +494,30 @@ void FiberManager::addTaskFinally(F&& func, G&& finally) {
     fiber->setFunctionFinally(std::ref(*funcLoc), std::ref(*finallyLoc));
   }
 
-  readyFibers_.push_back(*fiber);
   if (observer_) {
     observer_->runnable(reinterpret_cast<uintptr_t>(fiber));
   }
 
+  return fiber;
+}
+
+template <typename F, typename G>
+void FiberManager::addTaskFinally(F&& func, G&& finally) {
+  readyFibers_.push_back(
+      *createTaskFinally(std::forward<F>(func), std::forward<G>(finally)));
   ensureLoopScheduled();
+}
+
+template <typename F, typename G>
+void FiberManager::addTaskFinallyEager(F&& func, G&& finally) {
+  runEagerFiber(
+      createTaskFinally(std::forward<F>(func), std::forward<G>(finally)));
 }
 
 template <typename F>
 invoke_result_t<F> FiberManager::runInMainContext(F&& func) {
   if (UNLIKELY(activeFiber_ == nullptr)) {
-    return func();
+    return runNoInline(std::forward<F>(func));
   }
 
   typedef invoke_result_t<F> Result;
@@ -533,7 +586,7 @@ FiberManager::FiberManager(
     std::unique_ptr<LoopController> loopController__,
     Options options)
     : loopController_(std::move(loopController__)),
-      stackAllocator_(options.useGuardPages),
+      stackAllocator_(options.guardPagesPerStack),
       options_(preprocessOptions(std::move(options))),
       exceptionCallback_([](std::exception_ptr eptr, std::string context) {
         try {
@@ -547,7 +600,6 @@ FiberManager::FiberManager(
                       << "context '" << context << "'";
         }
       }),
-      timeoutManager_(std::make_shared<TimeoutController>(*loopController_)),
       fibersPoolResizer_(*this),
       localType_(typeid(LocalT)) {
   loopController_->setFiberManager(this);
@@ -560,5 +612,15 @@ typename FirstArgOf<F>::type::value_type inline await(F&& func) {
 
   return Promise<Result, BatonT>::await(std::forward<F>(func));
 }
+
+template <typename F>
+invoke_result_t<F> inline runInMainContext(F&& func) {
+  auto fm = FiberManager::getFiberManagerUnsafe();
+  if (UNLIKELY(fm == nullptr)) {
+    return runNoInline(std::forward<F>(func));
+  }
+  return fm->runInMainContext(std::forward<F>(func));
+}
+
 } // namespace fibers
 } // namespace folly

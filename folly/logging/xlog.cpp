@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,12 +13,47 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/logging/xlog.h>
+
+#include <type_traits>
+#include <unordered_map>
+
 #include <folly/Synchronized.h>
+#include <folly/portability/PThread.h>
 
 using folly::StringPiece;
 
 namespace folly {
+
+namespace detail {
+size_t& xlogEveryNThreadEntry(void const* const key) {
+  using Map = std::unordered_map<void const*, size_t>;
+
+  static auto pkey = [] {
+    pthread_key_t k;
+    pthread_key_create(&k, [](void* arg) {
+      auto& map = *static_cast<Map**>(arg);
+      delete map;
+      // This destructor occurs during some arbitrary stage of thread teardown.
+      // But some subsequent stage may invoke this function again! In which case
+      // the map, which has already been deleted, must be recreated and a fresh
+      // counter returned. Clearing the map pointer here signals that the map
+      // has been deleted and that the next call to this function in the same
+      // thread must recreate the map.
+      map = nullptr;
+    });
+    return k;
+  }();
+  thread_local Map* map;
+
+  if (!map) {
+    pthread_setspecific(pkey, &map);
+    map = new Map();
+  }
+  return (*map)[key];
+}
+} // namespace detail
 
 namespace {
 /**

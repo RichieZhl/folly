@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <functional>
@@ -50,6 +51,24 @@ class SettingWrapper {
   const T* operator->() const {
     return &core_.getSlow().value;
   }
+
+  /**
+   * Returns the setting's current value. Equivalent to dereference operator
+   * above.
+   */
+  std::conditional_t<IsSmallPOD<T>::value, T, const T&> value() const {
+    return operator*();
+  }
+
+  /**
+   * Returns the setting's value from snapshot. Following two forms are
+   * equivalient:
+   *   Snapshot snapshot;
+   *   *snapshot(FOLLY_SETTING(proj, name)) ==
+   *   FOLLY_SETTING(proj, name).value(snapshot);
+   */
+  std::conditional_t<IsSmallPOD<T>::value, T, const T&> value(
+      const Snapshot& snapshot) const;
 
   /**
    * Atomically updates the setting's current value.  Will invalidate
@@ -326,12 +345,21 @@ class Snapshot final : public detail::SnapshotBase {
  private:
   template <typename T>
   friend class detail::SnapshotSettingWrapper;
+
+  template <typename T, std::atomic<uint64_t>* TrivialPtr>
+  friend class detail::SettingWrapper;
 };
 
 namespace detail {
 template <class T>
 inline const T& SnapshotSettingWrapper<T>::operator*() const {
   return snapshot_.get(core_).value;
+}
+
+template <class T, std::atomic<uint64_t>* TrivialPtr>
+inline std::conditional_t<IsSmallPOD<T>::value, T, const T&>
+SettingWrapper<T, TrivialPtr>::value(const Snapshot& snapshot) const {
+  return snapshot.get(core_).value;
 }
 } // namespace detail
 

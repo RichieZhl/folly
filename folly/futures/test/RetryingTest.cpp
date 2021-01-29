@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -133,6 +133,17 @@ TEST(RetryingTest, policy_basic) {
   EXPECT_EQ(2, r.value());
 }
 
+TEST(RetryingTest, semifuture_policy_basic) {
+  auto r = futures::retrying(
+               futures::retryingPolicyBasic(3),
+               [](size_t n) {
+                 return n < 2 ? makeSemiFuture<size_t>(runtime_error("ha"))
+                              : makeSemiFuture(n);
+               })
+               .wait();
+  EXPECT_EQ(2, r.value());
+}
+
 TEST(RetryingTest, policy_capped_jittered_exponential_backoff) {
   multiAttemptExpectDurationWithin(5, milliseconds(200), milliseconds(400), [] {
     using ms = milliseconds;
@@ -234,6 +245,58 @@ TEST(RetryingTest, large_retries) {
     f.wait();
     EXPECT_TRUE(f.hasValue());
   }
+}
+
+TEST(RetryingTest, retryingJitteredExponentialBackoffDur) {
+  mt19937_64 rng(0);
+
+  auto backoffMin = milliseconds(100);
+  auto backoffMax = milliseconds(1000);
+
+  EXPECT_EQ(
+      100,
+      futures::detail::retryingJitteredExponentialBackoffDur(
+          1, backoffMin, backoffMax, 0, rng)
+          .count());
+
+  EXPECT_EQ(
+      200,
+      futures::detail::retryingJitteredExponentialBackoffDur(
+          2, backoffMin, backoffMax, 0, rng)
+          .count());
+
+  EXPECT_EQ(
+      400,
+      futures::detail::retryingJitteredExponentialBackoffDur(
+          3, backoffMin, backoffMax, 0, rng)
+          .count());
+
+  EXPECT_EQ(
+      800,
+      futures::detail::retryingJitteredExponentialBackoffDur(
+          4, backoffMin, backoffMax, 0, rng)
+          .count());
+
+  EXPECT_EQ(
+      1000,
+      futures::detail::retryingJitteredExponentialBackoffDur(
+          5, backoffMin, backoffMax, 0, rng)
+          .count());
+
+  // Invalid usage: backoffMin > backoffMax
+  backoffMax = milliseconds(0);
+
+  EXPECT_EQ(
+      100,
+      futures::detail::retryingJitteredExponentialBackoffDur(
+          1, backoffMin, backoffMax, 0, rng)
+          .count());
+
+  EXPECT_EQ(
+      100,
+      futures::detail::retryingJitteredExponentialBackoffDur(
+          1000, backoffMin, backoffMax, 0, rng)
+          .count());
 }
 
 /*

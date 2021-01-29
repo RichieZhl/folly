@@ -1,11 +1,11 @@
 /*
- * Copyright 2011-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,6 +15,8 @@
  */
 
 #include <folly/dynamic.h>
+
+#include <glog/logging.h>
 
 #include <folly/Range.h>
 #include <folly/json.h>
@@ -173,6 +175,27 @@ TEST(Dynamic, ObjectBasics) {
   mergeObj1 = origMergeObj1; // reset it
   mergeObj1.update_missing(mergeObj2);
   EXPECT_EQ(mergeObj1, combinedPreferObj1);
+}
+
+TEST(Dynamic, ArrayInsertErase) {
+  auto arr = dynamic::array(1, 2, 3, 4, 5, 6);
+
+  arr.erase(arr.begin() + 3);
+  EXPECT_EQ(5, arr[3].asInt());
+
+  arr.insert(arr.begin() + 3, 4);
+  EXPECT_EQ(4, arr[3].asInt());
+  EXPECT_EQ(5, arr[4].asInt());
+
+  auto x = dynamic::array(55, 66);
+  arr.insert(arr.begin() + 4, std::move(x));
+  EXPECT_EQ(55, arr[4][0].asInt());
+  EXPECT_EQ(66, arr[4][1].asInt());
+  EXPECT_EQ(5, arr[5].asInt());
+
+  dynamic obj = dynamic::object;
+  obj.insert(3, 4);
+  EXPECT_EQ(4, obj[3].asInt());
 }
 
 namespace {
@@ -1030,6 +1053,8 @@ TEST(Dynamic, MergeDiffNestedObjects) {
 using folly::json_pointer;
 
 TEST(Dynamic, JSONPointer) {
+  using err_code = folly::dynamic::json_pointer_resolution_error_code;
+
   dynamic target = dynamic::object;
   dynamic ary = dynamic::array("bar", "baz", dynamic::array("bletch", "xyzzy"));
   target["foo"] = ary;
@@ -1072,22 +1097,191 @@ TEST(Dynamic, JSONPointer) {
   // allow '-' to index in objects
   EXPECT_EQ("y", target.get_ptr(json_pointer::parse("/-/x"))->getString());
 
-  // invalid JSON pointers formatting when accessing array
-  EXPECT_THROW(
-      target.get_ptr(json_pointer::parse("/foo/01")), std::invalid_argument);
+  // validate parent pointer functionality
+
+  {
+    auto const resolved_value =
+        target.try_get_ptr(json_pointer::parse("")).value();
+    EXPECT_EQ(nullptr, resolved_value.parent);
+  }
+
+  {
+    auto parent_json_ptr = json_pointer::parse("/xyz");
+    auto json_ptr = json_pointer::parse("/xyz/def");
+
+    auto const parent = target.get_ptr(parent_json_ptr);
+    auto const resolved_value = target.try_get_ptr(json_ptr);
+
+    EXPECT_EQ(parent, resolved_value.value().parent);
+    EXPECT_TRUE(parent->isObject());
+    EXPECT_EQ("def", resolved_value.value().parent_key);
+  }
+
+  {
+    auto parent_json_ptr = json_pointer::parse("/foo");
+    auto json_ptr = json_pointer::parse("/foo/1");
+
+    auto const parent = target.get_ptr(parent_json_ptr);
+    auto const resolved_value = target.try_get_ptr(json_ptr);
+
+    EXPECT_EQ(parent, resolved_value.value().parent);
+    EXPECT_TRUE(parent->isArray());
+    EXPECT_EQ(1, resolved_value.value().parent_index);
+  }
+
+  //
+  // invalid pointer resolution cases
+  //
+
+  // invalid index formatting when accessing array
+  {
+    auto err = target.try_get_ptr(json_pointer::parse("/foo/01")).error();
+    EXPECT_EQ(err_code::index_has_leading_zero, err.error_code);
+    EXPECT_EQ(1, err.index);
+    EXPECT_EQ(target.get_ptr(json_pointer::parse("/foo")), err.context);
+    EXPECT_THROW(
+        target.get_ptr(json_pointer::parse("/foo/01")), std::invalid_argument);
+  }
 
   // non-existent keys/indexes
-  EXPECT_EQ(nullptr, ary.get_ptr(json_pointer::parse("/3")));
-  EXPECT_EQ(nullptr, target.get_ptr(json_pointer::parse("/unknown_key")));
-  // intermediate key not found
-  EXPECT_EQ(nullptr, target.get_ptr(json_pointer::parse("/foox/test")));
-  // Intermediate key is '-'
-  EXPECT_EQ(nullptr, target.get_ptr(json_pointer::parse("/foo/-/key")));
+  {
+    auto err = ary.try_get_ptr(json_pointer::parse("/3")).error();
+    EXPECT_EQ(err_code::index_out_of_bounds, err.error_code);
+    EXPECT_EQ(0, err.index);
+    EXPECT_EQ(ary.get_ptr(json_pointer::parse("")), err.context);
+    EXPECT_EQ(nullptr, ary.get_ptr(json_pointer::parse("/3")));
+  }
 
-  // invalid path in object (key in array)
-  EXPECT_THROW(
-      target.get_ptr(json_pointer::parse("/foo/1/bar")), folly::TypeError);
+  {
+    auto err = target.try_get_ptr(json_pointer::parse("/unknown_key")).error();
+    EXPECT_EQ(err_code::key_not_found, err.error_code);
+    EXPECT_EQ(0, err.index);
+    EXPECT_EQ(target.get_ptr(json_pointer::parse("")), err.context);
+    EXPECT_EQ(nullptr, target.get_ptr(json_pointer::parse("/unknown_key")));
+  }
+
+  // fail to resolve index inside string
+  {
+    auto err = target.try_get_ptr(json_pointer::parse("/foo/0/0")).error();
+    EXPECT_EQ(err_code::element_not_object_or_array, err.error_code);
+    EXPECT_EQ(2, err.index);
+    EXPECT_EQ(target.get_ptr(json_pointer::parse("/foo/0")), err.context);
+    EXPECT_THROW(
+        target.get_ptr(json_pointer::parse("/foo/0/0")), folly::TypeError);
+  }
+
+  // intermediate key not found
+  {
+    auto err = target.try_get_ptr(json_pointer::parse("/foox/test")).error();
+    EXPECT_EQ(err_code::key_not_found, err.error_code);
+    EXPECT_EQ(0, err.index);
+    EXPECT_EQ(target.get_ptr(json_pointer::parse("")), err.context);
+    EXPECT_EQ(nullptr, target.get_ptr(json_pointer::parse("/foox/test")));
+  }
+
+  // Intermediate key is '-' in _array_
+  {
+    auto err = target.try_get_ptr(json_pointer::parse("/foo/-/key")).error();
+    EXPECT_EQ(err_code::json_pointer_out_of_bounds, err.error_code);
+    EXPECT_EQ(2, err.index);
+    EXPECT_EQ(target.get_ptr(json_pointer::parse("/foo")), err.context);
+    EXPECT_EQ(nullptr, target.get_ptr(json_pointer::parse("/foo/-/key")));
+  }
+
+  // invalid path in object (non-numeric index in array)
+  {
+    auto err = target.try_get_ptr(json_pointer::parse("/foo/2/bar")).error();
+    EXPECT_EQ(err_code::index_not_numeric, err.error_code);
+    EXPECT_EQ(2, err.index);
+    EXPECT_EQ(target.get_ptr(json_pointer::parse("/foo/2")), err.context);
+    EXPECT_THROW(
+        target.get_ptr(json_pointer::parse("/foo/2/bar")),
+        std::invalid_argument);
+  }
 
   // Allow "-" index in the array
-  EXPECT_EQ(nullptr, target.get_ptr(json_pointer::parse("/foo/-")));
+  {
+    auto err = target.try_get_ptr(json_pointer::parse("/foo/-")).error();
+    EXPECT_EQ(err_code::append_requested, err.error_code);
+    EXPECT_EQ(1, err.index);
+    EXPECT_EQ(target.get_ptr(json_pointer::parse("/foo")), err.context);
+    EXPECT_EQ(nullptr, target.get_ptr(json_pointer::parse("/foo/-")));
+  }
+}
+
+TEST(Dynamic, Math) {
+  // tests int-int, int-double, double-int, and double-double math operations
+  std::vector<dynamic> values = {2, 5.0};
+
+  // addition
+  for (auto value1 : values) {
+    for (auto value2 : values) {
+      auto testValue = value1;
+      testValue += value2;
+      EXPECT_NEAR(
+          value1.asDouble() + value2.asDouble(), testValue.asDouble(), 0.0001);
+    }
+  }
+
+  // subtraction
+  for (auto value1 : values) {
+    for (auto value2 : values) {
+      auto testValue = value1;
+      testValue -= value2;
+      EXPECT_NEAR(
+          value1.asDouble() - value2.asDouble(), testValue.asDouble(), 0.0001);
+    }
+  }
+
+  // multiplication
+  for (auto value1 : values) {
+    for (auto value2 : values) {
+      auto testValue = value1;
+      testValue *= value2;
+      EXPECT_NEAR(
+          value1.asDouble() * value2.asDouble(), testValue.asDouble(), 0.0001);
+    }
+  }
+
+  // division
+  for (auto value1 : values) {
+    for (auto value2 : values) {
+      auto testValue = value1;
+      testValue /= value2;
+      EXPECT_NEAR(
+          value1.asDouble() / value2.asDouble(), testValue.asDouble(), 0.0001);
+    }
+  }
+}
+
+dynamic buildNestedKeys(size_t depth) {
+  if (depth == 0) {
+    return dynamic(0);
+  }
+  return dynamic::object(buildNestedKeys(depth - 1), 0);
+}
+
+dynamic buildNestedValues(size_t depth) {
+  if (depth == 0) {
+    return dynamic(0);
+  }
+  return dynamic::object(0, buildNestedValues(depth - 1));
+}
+
+TEST(Dynamic, EqualNestedKeys) {
+  // This tests for exponential behavior in the depth of the keys.
+  // If it is exponential this test won't finish.
+  size_t const kDepth = 100;
+  dynamic obj1 = buildNestedKeys(kDepth);
+  dynamic obj2 = obj1;
+  EXPECT_EQ(obj1, obj2);
+}
+
+TEST(Dynamic, EqualNestedValues) {
+  // This tests for exponential behavior in the depth of the values.
+  // If it is exponential this test won't finish.
+  size_t const kDepth = 100;
+  dynamic obj1 = buildNestedValues(kDepth);
+  dynamic obj2 = obj1;
+  EXPECT_EQ(obj1, obj2);
 }

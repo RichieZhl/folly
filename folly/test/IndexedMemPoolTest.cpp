@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -65,13 +65,11 @@ TEST(IndexedMemPool, no_starvation) {
     EXPECT_EQ(pipe(fd), 0);
 
     // makes sure we wait for available nodes, rather than fail allocIndex
-    sem_t allocSem;
-    sem_init(&allocSem, 0, poolSize);
+    DeterministicSchedule::Sem allocSem(poolSize);
 
     // this semaphore is only needed for deterministic replay, so that we
     // always block in an Sched:: operation rather than in a read() syscall
-    sem_t readSem;
-    sem_init(&readSem, 0, 0);
+    DeterministicSchedule::Sem readSem(0);
 
     std::thread produce = Sched::thread([&]() {
       for (auto i = 0; i < count; ++i) {

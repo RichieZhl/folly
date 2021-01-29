@@ -1,11 +1,11 @@
 /*
- * Copyright 2016-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <folly/Function.h>
@@ -81,12 +82,17 @@ class Core : public std::enable_shared_from_this<Core> {
 
   /**
    * Check if the observed object needs to be re-computed. Returns the version
-   * of last change. If force is true, re-computes the observed object, even if
-   * dependencies didn't change.
+   * of last change.
    *
    * This should be only called from ObserverManager thread.
    */
-  size_t refresh(size_t version, bool force = false);
+  size_t refresh(size_t version);
+
+  /**
+   * Force the next call to refresh to unconditionally re-compute the observed
+   * object, even if dependencies didn't change.
+   */
+  void setForceRefresh();
 
   ~Core();
 
@@ -110,6 +116,8 @@ class Core : public std::enable_shared_from_this<Core> {
   folly::Function<std::shared_ptr<const void>()> creator_;
 
   std::mutex refreshMutex_;
+
+  bool forceRefresh_{false};
 };
 } // namespace observer_detail
 } // namespace folly

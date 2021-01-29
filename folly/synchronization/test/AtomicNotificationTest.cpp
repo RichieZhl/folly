@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/synchronization/AtomicNotification.h>
+
+#include <folly/Optional.h>
 #include <folly/portability/GTest.h>
 
 #include <thread>
@@ -40,6 +43,29 @@ void run_atomic_wait_basic() {
   atomic_notify_one(&atomic);
 
   one.join();
+}
+
+template <typename Integer>
+void run_atomic_notify_all() {
+  auto&& atomic = std::atomic<Integer>{0};
+
+  auto&& func = [&]() {
+    while (true) {
+      atomic_wait(&atomic, Integer{0});
+      if (atomic.load() == 1) {
+        break;
+      }
+    }
+  };
+
+  auto&& t0 = std::thread{func};
+  auto&& t1 = std::thread{func};
+
+  atomic.store(1);
+  atomic_notify_all(&atomic);
+
+  t0.join();
+  t1.join();
 }
 
 template <typename Integer>
@@ -165,6 +191,16 @@ TEST(AtomicWait, BasicNonStandardWidths) {
   run_atomic_wait_basic<std::uint8_t>();
   run_atomic_wait_basic<std::uint16_t>();
   run_atomic_wait_basic<std::uint64_t>();
+}
+
+TEST(AtomicWait, AtomicNotifyAll) {
+  run_atomic_notify_all<std::uint32_t>();
+}
+
+TEST(AtomicWait, AtomicNotifyAllNonStandardWidths) {
+  run_atomic_notify_all<std::uint8_t>();
+  run_atomic_notify_all<std::uint16_t>();
+  run_atomic_notify_all<std::uint64_t>();
 }
 
 TEST(AtomicWait, AtomicWaitUntilTimeout) {

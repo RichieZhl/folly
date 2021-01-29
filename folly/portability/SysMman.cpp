@@ -1,11 +1,11 @@
 /*
- * Copyright 2016-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -95,7 +95,11 @@ void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t off) {
     return MAP_FAILED;
   }
   // No private copy on write.
-  if ((flags & MAP_PRIVATE) == MAP_PRIVATE && fd != -1) {
+  // If the map isn't writable, we can let it go through as
+  // whether changes to the underlying file are reflected in the map
+  // is defined to be unspecified by the standard.
+  if ((flags & MAP_PRIVATE) == MAP_PRIVATE &&
+      (prot & PROT_WRITE) == PROT_WRITE && fd != -1) {
     return MAP_FAILED;
   }
   // Map isn't anon, must be file backed.

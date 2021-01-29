@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,10 +25,6 @@
 #include <vector>
 
 #include <glog/logging.h>
-
-#ifndef FOLLY_NO_CONFIG
-#include <folly/folly-config.h>
-#endif
 
 #include <folly/Function.h>
 #include <folly/Portability.h>
@@ -144,6 +140,11 @@ class SSLContext {
    * @param version The lowest or oldest SSL version to support.
    */
   explicit SSLContext(SSLVersion version = TLSv1);
+  /**
+   * Constructor that helps ease migrations by directly wrapping a provided
+   * SSL_CTX*
+   */
+  explicit SSLContext(SSL_CTX* ctx);
   virtual ~SSLContext();
 
   /**
@@ -288,14 +289,16 @@ class SSLContext {
       bool checkPeerName,
       const std::string& peerName = std::string());
   /**
-   * Load server certificate.
+   * Loads a certificate chain stored on disk to be sent to the peer during
+   * TLS connection establishment.
    *
    * @param path   Path to the certificate file
    * @param format Certificate file format
    */
   virtual void loadCertificate(const char* path, const char* format = "PEM");
   /**
-   * Load server certificate from memory.
+   * Loads a PEM formatted certificate chain from memory to be sent to the peer
+   * during TLS connection establishment.
    *
    * @param cert  A PEM formatted certificate
    */

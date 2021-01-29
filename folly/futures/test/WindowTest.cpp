@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -359,7 +359,7 @@ TEST(WindowExecutor, parallel) {
     t.join();
   }
 
-  executor.waitFor(f);
+  executor.drain();
   EXPECT_TRUE(f.isReady());
   for (size_t i = 0; i < ps.size(); i++) {
     EXPECT_EQ(i, f.value()[i]);
@@ -396,7 +396,7 @@ TEST(WindowExecutor, parallelWithError) {
     t.join();
   }
 
-  executor.waitFor(f);
+  executor.drain();
   EXPECT_TRUE(f.isReady());
   EXPECT_THROW(f.value(), eggs_t);
 }

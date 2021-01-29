@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-// Copyright 2013-present Facebook. All Rights Reserved.
 
 #include <folly/Benchmark.h>
 #include <folly/Conv.h>
@@ -55,18 +54,8 @@ static const std::string lookup = "1234567890abcdefghijklmnopqrstuvwxyz"s;
 static const folly::StringPiece lookupPiece{
     "1234567890abcdefghijklmnopqrstuvwxyz"};
 
-#if !defined(FOLLY_HAVE_COMPARE_EQUIVALENT) && _LIBCPP_VERSION >= 3400
-#define FOLLY_HAVE_COMPARE_EQUIVALENT 1
-#endif
-
-#if !defined(FOLLY_HAVE_COMPARE_EQUIVALENT) && __GNUC__ >= 5
-#define FOLLY_HAVE_COMPARE_EQUIVALENT 1
-#endif
-
-#if FOLLY_HAVE_COMPARE_EQUIVALENT
 static map<string, int, std::less<void>> m_equiv;
 static set<string, std::less<void>> s_equiv;
-#endif
 
 static void initBenchmarks() {
   for (int i = 0; i < 1000; ++i) {
@@ -84,10 +73,8 @@ static void initBenchmarks() {
   sks = decltype(sks){s.begin(), s.end()};
   us = decltype(us){s.begin(), s.end()};
   skus = decltype(skus){s.begin(), s.end()};
-#if FOLLY_HAVE_COMPARE_EQUIVALENT
   m_equiv = decltype(m_equiv){m.begin(), m.end()};
   s_equiv = decltype(s_equiv){s.begin(), s.end()};
-#endif
 }
 
 BENCHMARK(std_map_benchmark_find_native) {
@@ -98,11 +85,9 @@ BENCHMARK_RELATIVE(std_map_benchmark_find_cross) {
   folly::doNotOptimizeAway(m.find(lookupPiece.str())->second);
 }
 
-#if FOLLY_HAVE_COMPARE_EQUIVALENT
 BENCHMARK_RELATIVE(std_map_benchmark_find_equiv) {
   folly::doNotOptimizeAway(m_equiv.find(lookupPiece)->second);
 }
-#endif
 
 BENCHMARK_RELATIVE(sk_map_benchmark_find_native) {
   folly::doNotOptimizeAway(skm.find(lookupPiece)->second);
@@ -178,11 +163,9 @@ BENCHMARK_RELATIVE(std_set_benchmark_find_cross) {
   folly::doNotOptimizeAway(s.find(lookupPiece.str()));
 }
 
-#if FOLLY_HAVE_COMPARE_EQUIVALENT
 BENCHMARK_RELATIVE(std_set_benchmark_find_equiv) {
   folly::doNotOptimizeAway(s_equiv.find(lookupPiece));
 }
-#endif
 
 BENCHMARK_RELATIVE(sk_set_benchmark_find_native) {
   folly::doNotOptimizeAway(sks.find(lookupPiece));

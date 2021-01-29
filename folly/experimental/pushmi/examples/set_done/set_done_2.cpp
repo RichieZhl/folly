@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <algorithm>
 #include <cassert>
 #include <iostream>
@@ -24,7 +25,7 @@
 #include <folly/experimental/pushmi/o/tap.h>
 #include <folly/experimental/pushmi/o/transform.h>
 
-using namespace pushmi::aliases;
+using namespace folly::pushmi::aliases;
 
 const bool setting_exists = false;
 
@@ -33,7 +34,7 @@ auto get_setting() {
     if (setting_exists) {
       op::just(42) | op::submit(out);
     } else {
-      op::empty<int>() | op::submit(out);
+      op::empty() | op::submit(out);
     }
   });
 }
@@ -42,13 +43,15 @@ auto println = [](auto v) { std::cout << v << std::endl; };
 
 // concat not yet implemented
 template <class T, class E = std::exception_ptr>
-auto concat = [](auto in) {
-  return mi::make_single_sender([in](auto out) mutable {
-    ::pushmi::submit(in, mi::make_receiver(out, [](auto out, auto v) {
-                       ::pushmi::submit(v, mi::any_receiver<E, T>(out));
-                     }));
-  });
-};
+auto concat() {
+  return [](auto in) {
+    return mi::make_single_sender([in](auto out) mutable {
+      mi::submit(in, mi::make_receiver(out, [](auto out_, auto v) {
+                   mi::submit(v, mi::any_receiver<E, T>(out_));
+                 }));
+    });
+  };
+}
 
 int main() {
   get_setting() | op::transform([](int i) { return std::to_string(i); }) |
@@ -61,11 +64,11 @@ int main() {
   op::just(42) | op::transform([](int i) {
     if (i < 42) {
       return mi::any_single_sender<std::exception_ptr, std::string>{
-          op::empty<std::string>()};
+          op::empty()};
     }
     return mi::any_single_sender<std::exception_ptr, std::string>{
         op::just(std::to_string(i))};
-  }) | concat<std::string> |
+  }) | concat<std::string>() |
       op::submit(println);
 
   std::cout << "OK" << std::endl;

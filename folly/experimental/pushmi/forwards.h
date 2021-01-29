@@ -1,12 +1,11 @@
-#pragma once
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,13 +14,21 @@
  * limitations under the License.
  */
 
-#include <folly/experimental/pushmi/traits.h>
+#pragma once
+
 #include <chrono>
+#include <cstddef>
 #include <exception>
 
+#include <folly/experimental/pushmi/detail/traits.h>
+
+namespace folly {
 namespace pushmi {
 
-// property_set
+// derive from this for types that need to find operator|() overloads by ADL
+struct pipeorigin {};
+
+// properties types:
 
 template <class T, class = void>
 struct property_traits;
@@ -32,45 +39,27 @@ struct property_set_traits;
 template <class... PropertyN>
 struct property_set;
 
-// trait & tag types
-template <class... TN>
-struct is_single;
-template <class... TN>
-struct is_many;
+template <class T, class Target, class = void>
+struct property_set_traits_disable;
 
-template <class... TN>
-struct is_flow;
+// Traits types:
 
-template <class... TN>
-struct is_receiver;
+template <class T, class = void>
+struct sender_traits;
 
-template <class... TN>
-struct is_sender;
-
-template <class... TN>
-struct is_executor;
-
-template <class... TN>
-struct is_time;
-template <class... TN>
-struct is_constrained;
-
-template <class... TN>
-struct is_always_blocking;
-
-template <class... TN>
-struct is_never_blocking;
-
-template <class... TN>
-struct is_maybe_blocking;
-
-template <class... TN>
-struct is_fifo_sequence;
-
-template <class... TN>
-struct is_concurrent_sequence;
+template <class T, class = void>
+struct receiver_traits;
 
 // implementation types
+
+template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
+class executor;
+
+template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
+class constrained_executor;
+
+template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
+class time_executor;
 
 template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
 class receiver;
@@ -82,19 +71,13 @@ template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
 class single_sender;
 
 template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
-class many_sender;
-
-template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
-class constrained_single_sender;
-
-template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
-class time_single_sender;
+class sender;
 
 template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
 class flow_single_sender;
 
 template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
-class flow_many_sender;
+class flow_sender;
 
 template <class E = std::exception_ptr, class... VN>
 class any_receiver;
@@ -110,7 +93,7 @@ template <class E = std::exception_ptr, class... VN>
 class any_single_sender;
 
 template <class E = std::exception_ptr, class... VN>
-class any_many_sender;
+class any_sender;
 
 template <class PE = std::exception_ptr, class E = PE, class... VN>
 class any_flow_single_sender;
@@ -120,25 +103,16 @@ template <
     class PV = std::ptrdiff_t,
     class E = PE,
     class... VN>
-class any_flow_many_sender;
-
-template <class E = std::exception_ptr, class C = std::ptrdiff_t, class... VN>
-class any_constrained_single_sender;
-
-template <
-    class E = std::exception_ptr,
-    class TP = std::chrono::system_clock::time_point,
-    class... VN>
-class any_time_single_sender;
+class any_flow_sender;
 
 template <class E = std::exception_ptr>
-struct any_executor;
+class any_executor;
 
 template <class E = std::exception_ptr>
 struct any_executor_ref;
 
 template <class E = std::exception_ptr, class CV = std::ptrdiff_t>
-struct any_constrained_executor;
+class any_constrained_executor;
 
 template <class E = std::exception_ptr, class TP = std::ptrdiff_t>
 struct any_constrained_executor_ref;
@@ -146,7 +120,7 @@ struct any_constrained_executor_ref;
 template <
     class E = std::exception_ptr,
     class TP = std::chrono::system_clock::time_point>
-struct any_time_executor;
+class any_time_executor;
 
 template <
     class E = std::exception_ptr,
@@ -156,10 +130,10 @@ struct any_time_executor_ref;
 namespace operators {}
 namespace extension_operators {}
 namespace aliases {
-namespace v = ::pushmi;
-namespace mi = ::pushmi;
-namespace op = ::pushmi::operators;
-namespace ep = ::pushmi::extension_operators;
+namespace v = ::folly::pushmi;
+namespace mi = ::folly::pushmi;
+namespace op = ::folly::pushmi::operators;
+namespace ep = ::folly::pushmi::extension_operators;
 } // namespace aliases
 
 namespace detail {
@@ -169,4 +143,33 @@ struct any {
 };
 } // namespace detail
 
+namespace awaitable_senders {
+// Used in the definition of sender_traits to define Senders in terms
+// Awaitables without causing constraint recursion.
+std::false_type safe_to_test_awaitable(void*);
+struct sender_adl_hook;
+} // namespace awaitable_senders
+
+template<template <class...> class T>
+struct construct_deduced;
+
+template<>
+struct construct_deduced<receiver>;
+
+template<>
+struct construct_deduced<flow_receiver>;
+
+template<>
+struct construct_deduced<single_sender>;
+
+template<>
+struct construct_deduced<sender>;
+
+template<>
+struct construct_deduced<flow_single_sender>;
+
+template<>
+struct construct_deduced<flow_sender>;
+
 } // namespace pushmi
+} // namespace folly

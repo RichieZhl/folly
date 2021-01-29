@@ -1,12 +1,11 @@
-#pragma once
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,9 +14,13 @@
  * limitations under the License.
  */
 
-#include <functional>
+#pragma once
+
 #include <type_traits>
 
+#include <folly/Traits.h>
+#include <folly/Utility.h>
+#include <folly/experimental/pushmi/detail/traits.h>
 #include <folly/experimental/pushmi/detail/functional.h>
 
 #define PUSHMI_NOEXCEPT_AUTO(...) \
@@ -29,6 +32,7 @@
   }\
   /**/
 
+namespace folly {
 namespace pushmi {
 #if __cpp_fold_expressions >= 201603
 template <bool... Bs>
@@ -73,22 +77,16 @@ PUSHMI_INLINE_VAR constexpr int sum_v = detail::sum_impl<Is...>();
 template <class...>
 struct typelist;
 
-template <class...>
-using void_t = void;
-
 template <class T>
 using remove_cvref_t = std::remove_cv_t<std::remove_reference_t<T>>;
+
+template<class T>
+PUSHMI_INLINE_VAR constexpr bool bool_v = T::value;
 
 PUSHMI_CONCEPT_DEF(
   template(class... Args)
   (concept True)(Args...),
     true
-);
-
-PUSHMI_CONCEPT_DEF(
-  template(class T, template<class...> class C)
-  (concept Valid)(T, C),
-    True< C<T> >
 );
 
 PUSHMI_CONCEPT_DEF(
@@ -117,37 +115,15 @@ PUSHMI_CONCEPT_DEF(
 
 PUSHMI_CONCEPT_DEF(
   template (class T)
-  concept Object,
-    requires (T* p) (
-      *p,
-      implicitly_convertible_to<const volatile void*>(p)
-    )
-);
-
-PUSHMI_CONCEPT_DEF(
-  template (class T, class... Args)
-  (concept Constructible)(T, Args...),
-    PUSHMI_PP_IS_CONSTRUCTIBLE(T, Args...)
-);
-
-PUSHMI_CONCEPT_DEF(
-  template (class T)
   concept MoveConstructible,
     Constructible<T, T>
 );
 
 PUSHMI_CONCEPT_DEF(
-  template (class From, class To)
-  concept ConvertibleTo,
-    requires (From (&f)()) (
-      static_cast<To>(f())
-    ) && std::is_convertible<From, To>::value
-);
-
-PUSHMI_CONCEPT_DEF(
   template (class A, class B)
   concept DerivedFrom,
-    __is_base_of(B, A)
+    __is_base_of(B, A) &&
+    std::is_convertible<const volatile A*, const volatile B*>::value
 );
 
 PUSHMI_CONCEPT_DEF(
@@ -172,12 +148,6 @@ PUSHMI_CONCEPT_DEF(
       implicitly_convertible_to<bool>( t == t ),
       implicitly_convertible_to<bool>( t != t )
     )
-);
-
-PUSHMI_CONCEPT_DEF(
-  template (class T)
-  concept SemiMovable,
-    Object<T> && Constructible<T, T> && ConvertibleTo<T, T>
 );
 
 PUSHMI_CONCEPT_DEF(
@@ -221,13 +191,58 @@ constexpr bool is_v = is_<T, C>::value;
 template <bool B, class T = void>
 using requires_ = std::enable_if_t<B, T>;
 
-PUSHMI_INLINE_VAR constexpr struct as_const_fn {
+template <class T, class Self, class Derived = Self>
+PUSHMI_PP_CONSTRAINED_USING(
+    static_cast<bool>(
+        not DerivedFrom<remove_cvref_t<T>, remove_cvref_t<Derived>> &&
+        not Same<remove_cvref_t<T>, remove_cvref_t<Self>>),
+    not_self_t =,
+    T);
+
+template <bool>
+struct Enable_ {};
+template <>
+struct Enable_<true> {
   template <class T>
-  constexpr const T& operator()(T& t) const noexcept {
-    return t;
-  }
-} const as_const{};
+  using _type = T;
+};
+
+template <class...>
+struct FrontOrVoid_ {
+  using type = void;
+};
+template <class T, class... Us>
+struct FrontOrVoid_<T, Us...> {
+  using type = T;
+};
+
+// An alias for the type in the pack if the pack has exactly one type in it.
+// Otherwise, this SFINAE's away. T cannot be an array type of an abstract type.
+// Instantiation proceeds from left to right. The use of Enable_ here avoids
+// needless instantiations of FrontOrVoid_.
+template<class...Ts>
+using identity_t = typename Enable_<sizeof...(Ts) == 1u>::
+  template _type<FrontOrVoid_<Ts...>>::type;
+
+template<class...Ts>
+using identity_or_void_t = typename Enable_<sizeof...(Ts) <= 1u>::
+  template _type<FrontOrVoid_<Ts...>>::type;
+
+// inherit: a class that inherits from a bunch of bases
+template <class... Ts>
+struct inherit : Ts... {
+  inherit() = default;
+  constexpr inherit(Ts... ts) : Ts((Ts &&) ts)... {}
+};
+template <class T>
+struct inherit<T> : T {
+  inherit() = default;
+  explicit constexpr inherit(T t) : T((T &&) t) {}
+};
+template <>
+struct inherit<> {};
 
 } // namespace detail
 
 } // namespace pushmi
+} // namespace folly

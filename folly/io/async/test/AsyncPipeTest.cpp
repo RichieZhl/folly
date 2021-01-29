@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -104,8 +104,10 @@ class AsyncPipeTest : public Test {
 
     EXPECT_EQ(::fcntl(pipeFds_[0], F_SETFL, O_NONBLOCK), 0);
     EXPECT_EQ(::fcntl(pipeFds_[1], F_SETFL, O_NONBLOCK), 0);
-    reader_ = folly::AsyncPipeReader::newReader(&eventBase_, pipeFds_[0]);
-    writer_ = folly::AsyncPipeWriter::newWriter(&eventBase_, pipeFds_[1]);
+    reader_ = folly::AsyncPipeReader::newReader(
+        &eventBase_, folly::NetworkSocket::fromFd(pipeFds_[0]));
+    writer_ = folly::AsyncPipeWriter::newWriter(
+        &eventBase_, folly::NetworkSocket::fromFd(pipeFds_[1]));
 
     readCallback_.setMovable(movable);
   }

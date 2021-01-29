@@ -1,11 +1,11 @@
 /*
- * Copyright 2016-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,6 +16,8 @@
 
 #include <folly/ssl/SSLSession.h>
 #include <folly/io/async/test/AsyncSSLSocketTest.h>
+#include <folly/net/NetOps.h>
+#include <folly/net/NetworkSocket.h>
 #include <folly/portability/GTest.h>
 #include <folly/portability/Sockets.h>
 
@@ -27,19 +29,14 @@ using folly::ssl::SSLSession;
 
 namespace folly {
 
-void getfds(int fds[2]) {
-  if (socketpair(PF_LOCAL, SOCK_STREAM, 0, fds) != 0) {
-    LOG(ERROR) << "failed to create socketpair: " << errnoStr(errno);
+void getfds(NetworkSocket fds[2]) {
+  if (netops::socketpair(PF_LOCAL, SOCK_STREAM, 0, fds) != 0) {
+    FAIL() << "failed to create socketpair: " << errnoStr(errno);
   }
   for (int idx = 0; idx < 2; ++idx) {
-    int flags = fcntl(fds[idx], F_GETFL, 0);
-    if (flags == -1) {
-      LOG(ERROR) << "failed to get flags for socket " << idx << ": "
-                 << errnoStr(errno);
-    }
-    if (fcntl(fds[idx], F_SETFL, flags | O_NONBLOCK) != 0) {
-      LOG(ERROR) << "failed to put socket " << idx
-                 << " in non-blocking mode: " << errnoStr(errno);
+    if (netops::set_socket_non_blocking(fds[idx]) != 0) {
+      FAIL() << "failed to put socket " << idx
+             << " in non-blocking mode: " << errnoStr(errno);
     }
   }
 }
@@ -48,6 +45,7 @@ void getctx(
     std::shared_ptr<folly::SSLContext> clientCtx,
     std::shared_ptr<folly::SSLContext> serverCtx) {
   clientCtx->ciphers("ALL:!ADH:!LOW:!EXP:!MD5:@STRENGTH");
+  clientCtx->loadTrustedCertificates(kTestCA);
 
   serverCtx->ciphers("ALL:!ADH:!LOW:!EXP:!MD5:@STRENGTH");
   serverCtx->loadCertificate(kTestCert);
@@ -85,7 +83,7 @@ TEST_F(SSLSessionTest, BasicTest) {
   std::unique_ptr<SSLSession> sess;
 
   {
-    int fds[2];
+    NetworkSocket fds[2];
     getfds(fds);
     AsyncSSLSocket::UniquePtr clientSock(
         new AsyncSSLSocket(clientCtx, &eventBase, fds[0], serverName));
@@ -104,7 +102,7 @@ TEST_F(SSLSessionTest, BasicTest) {
   }
 
   {
-    int fds[2];
+    NetworkSocket fds[2];
     getfds(fds);
     AsyncSSLSocket::UniquePtr clientSock(
         new AsyncSSLSocket(clientCtx, &eventBase, fds[0], serverName));
@@ -125,7 +123,7 @@ TEST_F(SSLSessionTest, SerializeDeserializeTest) {
   std::string sessiondata;
 
   {
-    int fds[2];
+    NetworkSocket fds[2];
     getfds(fds);
     AsyncSSLSocket::UniquePtr clientSock(
         new AsyncSSLSocket(clientCtx, &eventBase, fds[0], serverName));
@@ -146,7 +144,7 @@ TEST_F(SSLSessionTest, SerializeDeserializeTest) {
   }
 
   {
-    int fds[2];
+    NetworkSocket fds[2];
     getfds(fds);
     AsyncSSLSocket::UniquePtr clientSock(
         new AsyncSSLSocket(clientCtx, &eventBase, fds[0], serverName));
@@ -168,7 +166,7 @@ TEST_F(SSLSessionTest, SerializeDeserializeTest) {
 }
 
 TEST_F(SSLSessionTest, GetSessionID) {
-  int fds[2];
+  NetworkSocket fds[2];
   getfds(fds);
   AsyncSSLSocket::UniquePtr clientSock(
       new AsyncSSLSocket(clientCtx, &eventBase, fds[0], serverName));
@@ -187,5 +185,71 @@ TEST_F(SSLSessionTest, GetSessionID) {
   ASSERT_NE(sess, nullptr);
   auto sessID = sess->getSessionID();
   ASSERT_GE(sessID.length(), 0);
+}
+
+TEST_F(SSLSessionTest, ServerAuthWithPeerName) {
+  NetworkSocket fds[2];
+  getfds(fds);
+  clientCtx->authenticate(true, true, std::string(kTestCertCN));
+  clientCtx->setVerificationOption(
+      folly::SSLContext::SSLVerifyPeerEnum::VERIFY);
+
+  AsyncSSLSocket::UniquePtr clientSock(
+      new AsyncSSLSocket(clientCtx, &eventBase, fds[0], serverName));
+  auto clientPtr = clientSock.get();
+  AsyncSSLSocket::UniquePtr serverSock(
+      new AsyncSSLSocket(dfServerCtx, &eventBase, fds[1], true));
+  SSLHandshakeClient client(std::move(clientSock), true, true);
+  SSLHandshakeServerParseClientHello server(
+      std::move(serverSock), false, false);
+
+  eventBase.loop();
+  ASSERT_TRUE(client.handshakeVerify_);
+  ASSERT_TRUE(client.handshakeSuccess_);
+  ASSERT_FALSE(client.handshakeError_);
+
+  std::unique_ptr<SSLSession> sess =
+      std::make_unique<SSLSession>(clientPtr->getSSLSession());
+  ASSERT_NE(sess, nullptr);
+}
+
+TEST_F(SSLSessionTest, ServerAuth_MismatchedPeerName) {
+  NetworkSocket fds[2];
+  getfds(fds);
+  clientCtx->authenticate(true, true, "foo");
+  clientCtx->setVerificationOption(
+      folly::SSLContext::SSLVerifyPeerEnum::VERIFY);
+  AsyncSSLSocket::UniquePtr clientSock(
+      new AsyncSSLSocket(clientCtx, &eventBase, fds[0], serverName));
+  AsyncSSLSocket::UniquePtr serverSock(
+      new AsyncSSLSocket(dfServerCtx, &eventBase, fds[1], true));
+  SSLHandshakeClient client(std::move(clientSock), false, false);
+  SSLHandshakeServerParseClientHello server(
+      std::move(serverSock), false, false);
+
+  eventBase.loop();
+  ASSERT_TRUE(client.handshakeVerify_);
+  ASSERT_FALSE(client.handshakeSuccess_);
+  ASSERT_TRUE(client.handshakeError_);
+}
+
+TEST_F(SSLSessionTest, ServerAuth_MismatchedServerName) {
+  NetworkSocket fds[2];
+  getfds(fds);
+  clientCtx->authenticate(true, true);
+  clientCtx->setVerificationOption(
+      folly::SSLContext::SSLVerifyPeerEnum::VERIFY);
+  AsyncSSLSocket::UniquePtr clientSock(
+      new AsyncSSLSocket(clientCtx, &eventBase, fds[0], serverName));
+  AsyncSSLSocket::UniquePtr serverSock(
+      new AsyncSSLSocket(dfServerCtx, &eventBase, fds[1], true));
+  SSLHandshakeClient client(std::move(clientSock), false, false);
+  SSLHandshakeServerParseClientHello server(
+      std::move(serverSock), false, false);
+
+  eventBase.loop();
+  ASSERT_TRUE(client.handshakeVerify_);
+  ASSERT_FALSE(client.handshakeSuccess_);
+  ASSERT_TRUE(client.handshakeError_);
 }
 } // namespace folly

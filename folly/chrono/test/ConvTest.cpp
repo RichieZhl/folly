@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/chrono/Conv.h>
+
+#include <glog/logging.h>
 
 #include <folly/portability/GTest.h>
 
@@ -361,13 +364,18 @@ TEST(Conv, stdChronoToTimespec) {
   EXPECT_EQ(36000, ts.tv_sec);
   EXPECT_EQ(0, ts.tv_nsec);
 
-  ts = to<struct timespec>(createTimePoint<steady_clock>(123ns));
-  EXPECT_EQ(0, ts.tv_sec);
-  EXPECT_EQ(123, ts.tv_nsec);
+  // Must select duration types from the clock for the createTimePoint tests
+  // since not all clocks on all platforms natively support nanoseconds:
 
-  ts = to<struct timespec>(createTimePoint<system_clock>(123ns));
+  constexpr auto const steady_duration = steady_clock::duration(123);
+  ts = to<struct timespec>(createTimePoint<steady_clock>(steady_duration));
   EXPECT_EQ(0, ts.tv_sec);
-  EXPECT_EQ(123, ts.tv_nsec);
+  EXPECT_EQ(nanoseconds(steady_duration).count(), ts.tv_nsec);
+
+  constexpr auto const system_duration = system_clock::duration(123);
+  ts = to<struct timespec>(createTimePoint<system_clock>(system_duration));
+  EXPECT_EQ(0, ts.tv_sec);
+  EXPECT_EQ(nanoseconds(system_duration).count(), ts.tv_nsec);
 
   // Test with some unusual durations where neither the numerator nor
   // denominator are 1.

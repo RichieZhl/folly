@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/logging/LoggerDB.h>
 
 #include <set>
@@ -68,53 +69,6 @@ FOLLY_ATTR_WEAK void initializeLoggerDB(LoggerDB& db) {
   db.updateConfig(config);
 }
 
-namespace {
-class LoggerDBSingleton {
- public:
-  explicit LoggerDBSingleton(LoggerDB* FOLLY_NONNULL db) : db_{db} {
-    // Call initializeLoggerDB() to apply some basic initial configuration.
-    initializeLoggerDB(*db_);
-  }
-
-  ~LoggerDBSingleton() {
-    // We intentionally leak the LoggerDB object on normal destruction.
-    // We want Logger objects to remain valid for the entire lifetime of the
-    // program, without having to worry about destruction ordering issues, or
-    // making the Logger perform reference counting on the LoggerDB.
-    //
-    // Therefore the main LoggerDB object, and all of the LogCategory objects
-    // it contains, are always intentionally leaked.
-    //
-    // However, we do call db_->cleanupHandlers() to destroy any registered
-    // LogHandler objects.  The LogHandlers can be user-defined objects and may
-    // hold resources that should be cleaned up.  This also ensures that the
-    // LogHandlers flush all outstanding messages before we exit.
-    db_->cleanupHandlers();
-
-    // Store the released pointer in a static variable just to prevent ASAN
-    // from complaining that we are leaking data.
-    static LoggerDB* db = db_.release();
-    (void)db;
-  }
-
-  LoggerDB& getDB() const {
-    return *db_;
-  }
-
- private:
-  // Store LoggerDB as a unique_ptr so it will be automatically destroyed if
-  // initializeLoggerDB() throws in the constructor.  We will explicitly
-  // release this during the normal destructor.
-  std::unique_ptr<LoggerDB> db_;
-};
-} // namespace
-
-LoggerDB& LoggerDB::get() {
-  // Intentionally leaky singleton
-  static LoggerDBSingleton singleton{new LoggerDB()};
-  return singleton.getDB();
-}
-
 LoggerDB::LoggerDB() {
   // Create the root log category and set its log level
   auto rootUptr = std::make_unique<LogCategory>(this);
@@ -128,7 +82,7 @@ LoggerDB::LoggerDB() {
 
 LoggerDB::LoggerDB(TestConstructorArg) : LoggerDB() {}
 
-LoggerDB::~LoggerDB() {}
+LoggerDB::~LoggerDB() = default;
 
 LogCategory* LoggerDB::getCategory(StringPiece name) {
   return getOrCreateCategoryLocked(*loggersByName_.wlock(), name);
@@ -224,6 +178,8 @@ LogConfig LoggerDB::getConfigImpl(bool includeAllCategories) const {
 
       LogCategoryConfig categoryConfig(
           levelInfo.first, levelInfo.second, handlerNames);
+      categoryConfig.propagateLevelMessagesToParent =
+          category->getPropagateLevelMessagesToParentRelaxed();
       categoryConfigs.emplace(category->getName(), std::move(categoryConfig));
     }
   }
@@ -427,6 +383,10 @@ void LoggerDB::updateConfig(const LogConfig& config) {
     // Update the level settings
     category->setLevelLocked(
         entry.second.level, entry.second.inheritParentLevel);
+
+    // Update the propagation settings
+    category->setPropagateLevelMessagesToParent(
+        entry.second.propagateLevelMessagesToParent);
   }
 
   finishConfigUpdate(handlerInfo, &handlers, &oldToNewHandlerMap);

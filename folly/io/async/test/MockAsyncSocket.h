@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <folly/io/async/AsyncSocket.h>
@@ -47,8 +48,8 @@ class MockAsyncSocket : public AsyncSocket {
   }
 
   MOCK_CONST_METHOD1(getPeerAddress, void(folly::SocketAddress*));
-  MOCK_METHOD0(detachFd, int());
-  MOCK_CONST_METHOD0(getFd, int());
+  MOCK_METHOD0(detachNetworkSocket, NetworkSocket());
+  MOCK_CONST_METHOD0(getNetworkSocket, NetworkSocket());
   MOCK_METHOD0(closeNow, void());
   MOCK_CONST_METHOD0(good, bool());
   MOCK_CONST_METHOD0(readable, bool());
@@ -60,6 +61,7 @@ class MockAsyncSocket : public AsyncSocket {
   MOCK_METHOD4(setSockOptVirtual, int(int, int, void const*, socklen_t));
   MOCK_METHOD1(setErrMessageCB, void(AsyncSocket::ErrMessageCallback*));
   MOCK_METHOD1(setSendMsgParamCB, void(AsyncSocket::SendMsgParamsCallback*));
+  MOCK_CONST_METHOD0(getSecurityProtocol, std::string());
   void setPreReceivedData(std::unique_ptr<IOBuf> data) override {
     return _setPreReceivedData(data);
   }

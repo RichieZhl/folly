@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -132,7 +132,7 @@ TEST(Then, tryConstValue) {
 }
 
 TEST(Then, constRValueReference) {
-  auto future = makeFuture<Widget>(23).then([](const Widget&& w) {
+  auto future = makeFuture<Widget>(23).thenValue([](const Widget&& w) {
     EXPECT_EQ(w.copied_, 0);
     EXPECT_EQ(w.moved_, 2);
     return w.v_;
@@ -141,7 +141,7 @@ TEST(Then, constRValueReference) {
 }
 
 TEST(Then, rValueReference) {
-  auto future = makeFuture<Widget>(23).then([](Widget&& w) {
+  auto future = makeFuture<Widget>(23).thenValue([](Widget&& w) {
     EXPECT_EQ(w.copied_, 0);
     EXPECT_EQ(w.moved_, 2);
     return w.v_;
@@ -150,7 +150,7 @@ TEST(Then, rValueReference) {
 }
 
 TEST(Then, constLValueReference) {
-  auto future = makeFuture<Widget>(23).then([](const Widget& w) {
+  auto future = makeFuture<Widget>(23).thenValue([](const Widget& w) {
     EXPECT_EQ(w.copied_, 0);
     EXPECT_EQ(w.moved_, 2);
     return w.v_;
@@ -159,7 +159,7 @@ TEST(Then, constLValueReference) {
 }
 
 TEST(Then, value) {
-  auto future = makeFuture<Widget>(23).then([](Widget w) {
+  auto future = makeFuture<Widget>(23).thenValue([](Widget w) {
     EXPECT_EQ(w.copied_, 0);
     EXPECT_EQ(w.moved_, 3);
     return w.v_;
@@ -168,7 +168,7 @@ TEST(Then, value) {
 }
 
 TEST(Then, constValue) {
-  auto future = makeFuture<Widget>(23).then([](const Widget w) {
+  auto future = makeFuture<Widget>(23).thenValue([](const Widget w) {
     EXPECT_EQ(w.copied_, 0);
     EXPECT_EQ(w.moved_, 3);
     return w.v_;

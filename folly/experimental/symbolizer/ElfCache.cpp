@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -79,8 +79,7 @@ std::shared_ptr<ElfFile> SignalSafeElfCache::getFile(StringPiece p) {
 
   auto& f = slots_[n];
 
-  const char* msg = "";
-  int r = f->openAndFollow(scratchpad_.data(), true, &msg);
+  int r = f->openAndFollow(scratchpad_.data());
   if (r != ElfFile::kSuccess) {
     return nullptr;
   }
@@ -108,8 +107,7 @@ std::shared_ptr<ElfFile> ElfCache::getFile(StringPiece p) {
   auto& path = entry->path;
 
   // No negative caching
-  const char* msg = "";
-  int r = entry->file.openAndFollow(path.c_str(), true, &msg);
+  int r = entry->file.openAndFollow(path.c_str());
   if (r != ElfFile::kSuccess) {
     return nullptr;
   }

@@ -1,11 +1,11 @@
 /*
- * Copyright 2011-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,8 +18,10 @@
 
 #include <glog/logging.h>
 
+#include <condition_variable>
 #include <functional>
 #include <stdexcept>
+#include <thread>
 
 #include <folly/portability/GTest.h>
 
@@ -132,7 +134,8 @@ TEST(ScopeGuard, DifferentWaysToBind) {
 
 TEST(ScopeGuard, GuardException) {
   EXPECT_DEATH(
-      makeGuard([] { throw std::runtime_error("dtors should never throw!"); }),
+      (void)makeGuard(
+          [] { throw std::runtime_error("dtors should never throw!"); }),
       "dtors should never throw!");
 }
 
@@ -292,6 +295,30 @@ void testScopeFailAndScopeSuccess(ErrorBehavior error, bool expectFail) {
   EXPECT_EQ(!expectFail, scopeSuccessExecuted);
 }
 
+TEST(ScopeGuard, TEST_SCOPE_FAIL_EXCEPTION_PTR) {
+  bool catchExecuted = false;
+  bool failExecuted = false;
+
+  try {
+    SCOPE_FAIL {
+      failExecuted = true;
+    };
+
+    std::exception_ptr ep;
+    try {
+      throw std::runtime_error("test");
+    } catch (...) {
+      ep = std::current_exception();
+    }
+    std::rethrow_exception(ep);
+  } catch (const std::exception&) {
+    catchExecuted = true;
+  }
+
+  EXPECT_TRUE(catchExecuted);
+  EXPECT_TRUE(failExecuted);
+}
+
 TEST(ScopeGuard, TEST_SCOPE_FAIL_AND_SCOPE_SUCCESS) {
   testScopeFailAndScopeSuccess(ErrorBehavior::SUCCESS, false);
   testScopeFailAndScopeSuccess(ErrorBehavior::HANDLED_ERROR, false);
@@ -326,6 +353,6 @@ TEST(ScopeGuard, TEST_THROWING_CLEANUP_ACTION) {
   };
   int scopeExitExecuted = 0;
   ThrowingCleanupAction onExit(scopeExitExecuted);
-  EXPECT_THROW(makeGuard(onExit), std::runtime_error);
+  EXPECT_THROW((void)makeGuard(onExit), std::runtime_error);
   EXPECT_EQ(scopeExitExecuted, 1);
 }

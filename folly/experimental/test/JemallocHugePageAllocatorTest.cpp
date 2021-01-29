@@ -1,11 +1,11 @@
 /*
- * Copyright 2016-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -75,7 +75,7 @@ TEST(JemallocHugePageAllocatorTest, LargeAllocations) {
   }
 
   // This fits
-  void* ptr1 = jha::allocate(mb(1) + kb(512));
+  void* ptr1 = jha::allocate(mb(2));
   EXPECT_NE(nullptr, ptr1);
 
   if (initialized) {
@@ -91,7 +91,7 @@ TEST(JemallocHugePageAllocatorTest, LargeAllocations) {
   // Free and reuse huge page area
   jha::deallocate(ptr2);
   jha::deallocate(ptr0);
-  ptr2 = jha::allocate(mb(1));
+  ptr2 = jha::allocate(kb(64));
 
   // No memory in the huge page arena was freed - ptr0 was allocated
   // before init and ptr2 didn't fit

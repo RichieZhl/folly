@@ -1,12 +1,11 @@
-#pragma once
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,9 +14,12 @@
  * limitations under the License.
  */
 
+#pragma once
+
 #include <folly/experimental/pushmi/o/extension_operators.h>
 #include <folly/experimental/pushmi/piping.h>
 
+namespace folly {
 namespace pushmi {
 
 namespace detail {
@@ -31,20 +33,20 @@ struct filter_fn {
     (requires Receiver<Out>)
     void operator()(Out& out, VN&&... vn) const {
       if (p_(as_const(vn)...)) {
-        ::pushmi::set_value(out, (VN &&) vn...);
+        set_value(out, (VN &&) vn...);
       }
     }
   };
   template <class In, class Predicate>
   struct submit_impl {
     Predicate p_;
-    PUSHMI_TEMPLATE(class Out)
+    PUSHMI_TEMPLATE(class SIn, class Out)
     (requires Receiver<Out>)
-    auto operator()(Out out) const {
-      return ::pushmi::detail::receiver_from_fn<In>()(
+    auto operator()(SIn&& in, Out out) const {
+      submit((In&&)in, ::folly::pushmi::detail::receiver_from_fn<In>()(
           std::move(out),
           // copy 'p' to allow multiple calls to submit
-          on_value_impl<In, Predicate>{p_});
+          on_value_impl<In, Predicate>{p_}));
     }
   };
   template <class Predicate>
@@ -53,10 +55,9 @@ struct filter_fn {
     PUSHMI_TEMPLATE(class In)
     (requires Sender<In>)
     auto operator()(In in) const {
-      return ::pushmi::detail::sender_from(
+      return ::folly::pushmi::detail::sender_from(
           std::move(in),
-          ::pushmi::detail::submit_transform_out<In>(
-              submit_impl<In, Predicate>{p_}));
+          submit_impl<In, Predicate>{p_});
     }
   };
 
@@ -75,3 +76,4 @@ PUSHMI_INLINE_VAR constexpr detail::filter_fn filter{};
 } // namespace operators
 
 } // namespace pushmi
+} // namespace folly

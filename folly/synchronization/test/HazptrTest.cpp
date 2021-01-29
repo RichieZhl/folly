@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,8 +20,10 @@
 #include <folly/synchronization/example/HazptrWideCAS.h>
 #include <folly/synchronization/test/Barrier.h>
 
+#include <folly/Singleton.h>
 #include <folly/portability/GFlags.h>
 #include <folly/portability/GTest.h>
+#include <folly/synchronization/HazptrThreadPoolExecutor.h>
 #include <folly/test/DeterministicSchedule.h>
 
 #include <atomic>
@@ -40,6 +42,7 @@ using folly::hazptr_holder;
 using folly::hazptr_local;
 using folly::hazptr_obj_base;
 using folly::hazptr_obj_base_linked;
+using folly::hazptr_obj_batch;
 using folly::hazptr_retire;
 using folly::hazptr_root;
 using folly::hazptr_tc;
@@ -810,6 +813,126 @@ void priv_dtor_test() {
 }
 
 template <template <typename> class Atom = std::atomic>
+void batch_test() {
+  int num = 10001;
+  using NodeT = Node<Atom>;
+  c_.clear();
+  {
+    hazptr_obj_batch<Atom> batch;
+    auto thr = DSched::thread([&]() {
+      for (int i = 0; i < num; ++i) {
+        auto p = new NodeT;
+        p->set_batch_no_tag(&batch);
+        p->retire();
+      }
+    });
+    DSched::join(thr);
+  }
+  ASSERT_EQ(c_.ctors(), num);
+  //  ASSERT_GT(c_.dtors(), 0);
+  hazptr_cleanup<Atom>();
+  c_.clear();
+  {
+    hazptr_obj_batch<Atom> batch;
+    auto thr = DSched::thread([&]() {
+      for (int i = 0; i < num; ++i) {
+        auto p = new NodeT;
+        p->set_batch_tag(&batch);
+        p->retire();
+      }
+    });
+    DSched::join(thr);
+  }
+  ASSERT_EQ(c_.ctors(), num);
+  ASSERT_GT(c_.dtors(), 0);
+  hazptr_cleanup<Atom>();
+}
+
+template <template <typename> class Atom = std::atomic>
+void recursive_destruction_test() {
+  struct Foo : public hazptr_obj_base<Foo, Atom> {
+    hazptr_obj_batch<Atom> batch_;
+    Foo* foo_{nullptr};
+    explicit Foo(hazptr_obj_batch<Atom>* b) {
+      this->set_batch_tag(b);
+      c_.inc_ctors();
+    }
+    ~Foo() {
+      set(nullptr);
+      c_.inc_dtors();
+    }
+    void set(Foo* foo) {
+      if (foo_) {
+        foo_->retire();
+      }
+      foo_ = foo;
+    }
+    hazptr_obj_batch<Atom>* batch() {
+      return &batch_;
+    }
+  };
+
+  int num1 = 101;
+  int num2 = 42;
+  int nthr = FLAGS_num_threads;
+  c_.clear();
+  std::vector<std::thread> threads(nthr);
+  for (int tid = 0; tid < nthr; ++tid) {
+    threads[tid] = DSched::thread([&, tid]() {
+      hazptr_obj_batch<Atom> b0;
+      Foo* foo0 = new Foo(&b0);
+      for (int i = tid; i < num1; i += nthr) {
+        Foo* foo1 = new Foo(foo0->batch());
+        foo0->set(foo1);
+        for (int j = 0; j < num2; ++j) {
+          foo1->set(new Foo(foo1->batch()));
+        }
+      }
+      foo0->retire();
+    });
+  }
+  for (auto& t : threads) {
+    DSched::join(t);
+  }
+  int total = nthr + num1 + num1 * num2;
+  ASSERT_EQ(c_.ctors(), total);
+  ASSERT_EQ(c_.dtors(), total);
+}
+
+void fork_test() {
+  folly::start_hazptr_thread_pool_executor();
+  auto trigger_reclamation = [] {
+    hazptr_obj_batch b;
+    for (int i = 0; i < 2001; ++i) {
+      auto p = new Node;
+      p->set_batch_no_tag(&b);
+      p->retire();
+    }
+  };
+  std::thread t1(trigger_reclamation);
+  t1.join();
+  folly::SingletonVault::singleton()->destroyInstances();
+  auto pid = fork();
+  folly::SingletonVault::singleton()->reenableInstances();
+  if (pid > 0) {
+    // parent
+    int status = -1;
+    auto pid2 = waitpid(pid, &status, 0);
+    EXPECT_EQ(status, 0);
+    EXPECT_EQ(pid, pid2);
+    trigger_reclamation();
+  } else if (pid == 0) {
+    // child
+    c_.clear();
+    std::thread t2(trigger_reclamation);
+    t2.join();
+    exit(0); // Do not print gtest results
+  } else {
+    PLOG(FATAL) << "Failed to fork()";
+  }
+}
+
+template <template <typename> class Atom = std::atomic>
 void lifo_test() {
   for (int i = 0; i < FLAGS_num_reps; ++i) {
     Atom<int> sum{0};
@@ -884,13 +1007,20 @@ void wide_cas_test() {
   hazptr_cleanup<Atom>();
 }
 
+class HazptrPreInitTest : public testing::Test {
+ private:
+  // pre-init to avoid deadlock when using DeterministicAtomic
+  hazptr_domain<DeterministicAtomic>& defaultDomainHelper_{
+      folly::hazptr_default_domain_helper<DeterministicAtomic>::get()};
+};
+
 // Tests
 
 TEST(HazptrTest, basic_objects) {
   basic_objects_test();
 }
 
-TEST(HazptrTest, dsched_basic_objects) {
+TEST_F(HazptrPreInitTest, dsched_basic_objects) {
   DSched sched(DSched::uniform(0));
   basic_objects_test<DeterministicAtomic>();
 }
@@ -899,7 +1029,7 @@ TEST(HazptrTest, copy_and_move) {
   copy_and_move_test();
 }
 
-TEST(HazptrTest, dsched_copy_and_move) {
+TEST_F(HazptrPreInitTest, dsched_copy_and_move) {
   DSched sched(DSched::uniform(0));
   copy_and_move_test<DeterministicAtomic>();
 }
@@ -908,7 +1038,7 @@ TEST(HazptrTest, basic_holders) {
   basic_holders_test();
 }
 
-TEST(HazptrTest, dsched_basic_holders) {
+TEST_F(HazptrPreInitTest, dsched_basic_holders) {
   DSched sched(DSched::uniform(0));
   basic_holders_test<DeterministicAtomic>();
 }
@@ -917,7 +1047,7 @@ TEST(HazptrTest, basic_protection) {
   basic_protection_test();
 }
 
-TEST(HazptrTest, dsched_basic_protection) {
+TEST_F(HazptrPreInitTest, dsched_basic_protection) {
   DSched sched(DSched::uniform(0));
   basic_protection_test<DeterministicAtomic>();
 }
@@ -926,7 +1056,7 @@ TEST(HazptrTest, virtual) {
   virtual_test();
 }
 
-TEST(HazptrTest, dsched_virtual) {
+TEST_F(HazptrPreInitTest, dsched_virtual) {
   DSched sched(DSched::uniform(0));
   virtual_test<DeterministicAtomic>();
 }
@@ -939,7 +1069,7 @@ TEST(HazptrTest, destruction) {
   destruction_test(default_hazptr_domain<std::atomic>());
 }
 
-TEST(HazptrTest, dsched_destruction) {
+TEST_F(HazptrPreInitTest, dsched_destruction) {
   DSched sched(DSched::uniform(0));
   {
     hazptr_domain<DeterministicAtomic> myDomain0;
@@ -953,7 +1083,7 @@ TEST(HazptrTest, move) {
   move_test();
 }
 
-TEST(HazptrTest, dsched_move) {
+TEST_F(HazptrPreInitTest, dsched_move) {
   DSched sched(DSched::uniform(0));
   move_test<DeterministicAtomic>();
 }
@@ -962,7 +1092,7 @@ TEST(HazptrTest, array) {
   array_test();
 }
 
-TEST(HazptrTest, dsched_array) {
+TEST_F(HazptrPreInitTest, dsched_array) {
   DSched sched(DSched::uniform(0));
   array_test<DeterministicAtomic>();
 }
@@ -971,7 +1101,7 @@ TEST(HazptrTest, array_dtor_full_tc) {
   array_dtor_full_tc_test();
 }
 
-TEST(HazptrTest, dsched_array_dtor_full_tc) {
+TEST_F(HazptrPreInitTest, dsched_array_dtor_full_tc) {
   DSched sched(DSched::uniform(0));
   array_dtor_full_tc_test<DeterministicAtomic>();
 }
@@ -980,7 +1110,7 @@ TEST(HazptrTest, local) {
   local_test();
 }
 
-TEST(HazptrTest, dsched_local) {
+TEST_F(HazptrPreInitTest, dsched_local) {
   DSched sched(DSched::uniform(0));
   local_test<DeterministicAtomic>();
 }
@@ -989,7 +1119,7 @@ TEST(HazptrTest, linked_mutable) {
   linked_test<true>();
 }
 
-TEST(HazptrTest, dsched_linked_mutable) {
+TEST_F(HazptrPreInitTest, dsched_linked_mutable) {
   DSched sched(DSched::uniform(0));
   linked_test<true, DeterministicAtomic>();
 }
@@ -998,7 +1128,7 @@ TEST(HazptrTest, linked_immutable) {
   linked_test<false>();
 }
 
-TEST(HazptrTest, dsched_linked_immutable) {
+TEST_F(HazptrPreInitTest, dsched_linked_immutable) {
   DSched sched(DSched::uniform(0));
   linked_test<false, DeterministicAtomic>();
 }
@@ -1007,7 +1137,7 @@ TEST(HazptrTest, mt_linked_mutable) {
   mt_linked_test<true>();
 }
 
-TEST(HazptrTest, dsched_mt_linked_mutable) {
+TEST_F(HazptrPreInitTest, dsched_mt_linked_mutable) {
   DSched sched(DSched::uniform(0));
   mt_linked_test<true, DeterministicAtomic>();
 }
@@ -1016,7 +1146,7 @@ TEST(HazptrTest, mt_linked_immutable) {
   mt_linked_test<false>();
 }
 
-TEST(HazptrTest, dsched_mt_linked_immutable) {
+TEST_F(HazptrPreInitTest, dsched_mt_linked_immutable) {
   DSched sched(DSched::uniform(0));
   mt_linked_test<false, DeterministicAtomic>();
 }
@@ -1025,7 +1155,7 @@ TEST(HazptrTest, auto_retire) {
   auto_retire_test();
 }
 
-TEST(HazptrTest, dsched_auto_retire) {
+TEST_F(HazptrPreInitTest, dsched_auto_retire) {
   DSched sched(DSched::uniform(0));
   auto_retire_test<DeterministicAtomic>();
 }
@@ -1034,7 +1164,7 @@ TEST(HazptrTest, free_function_retire) {
   free_function_retire_test();
 }
 
-TEST(HazptrTest, dsched_free_function_retire) {
+TEST_F(HazptrPreInitTest, dsched_free_function_retire) {
   DSched sched(DSched::uniform(0));
   free_function_retire_test<DeterministicAtomic>();
 }
@@ -1043,7 +1173,7 @@ TEST(HazptrTest, cleanup) {
   cleanup_test();
 }
 
-TEST(HazptrTest, dsched_cleanup) {
+TEST_F(HazptrPreInitTest, dsched_cleanup) {
   DSched sched(DSched::uniform(0));
   cleanup_test<DeterministicAtomic>();
 }
@@ -1052,16 +1182,37 @@ TEST(HazptrTest, priv_dtor) {
   priv_dtor_test();
 }
 
-TEST(HazptrTest, dsched_priv_dtor) {
+TEST_F(HazptrPreInitTest, dsched_priv_dtor) {
   DSched sched(DSched::uniform(0));
   priv_dtor_test<DeterministicAtomic>();
+}
+
+TEST(HazptrTest, batch) {
+  batch_test();
+}
+
+TEST(HazptrTest, dsched_batch) {
+  DSched sched(DSched::uniform(0));
+  batch_test<DeterministicAtomic>();
+}
+
+TEST(HazptrTest, recursive_destruction) {
+  recursive_destruction_test();
+}
+
+TEST(HazptrTest, dsched_recursive_destruction) {
+  recursive_destruction_test<DeterministicAtomic>();
+}
+
+TEST(HazptrTest, fork) {
+  fork_test();
 }
 
 TEST(HazptrTest, lifo) {
   lifo_test();
 }
 
-TEST(HazptrTest, dsched_lifo) {
+TEST_F(HazptrPreInitTest, dsched_lifo) {
   DSched sched(DSched::uniform(0));
   lifo_test<DeterministicAtomic>();
 }
@@ -1070,7 +1221,7 @@ TEST(HazptrTest, swmr) {
   swmr_test();
 }
 
-TEST(HazptrTest, dsched_swmr) {
+TEST_F(HazptrPreInitTest, dsched_swmr) {
   DSched sched(DSched::uniform(0));
   swmr_test<DeterministicAtomic>();
 }
@@ -1079,7 +1230,7 @@ TEST(HazptrTest, wide_cas) {
   wide_cas_test();
 }
 
-TEST(HazptrTest, dsched_wide_cas) {
+TEST_F(HazptrPreInitTest, dsched_wide_cas) {
   DSched sched(DSched::uniform(0));
   wide_cas_test<DeterministicAtomic>();
 }
@@ -1285,8 +1436,30 @@ uint64_t cleanup_bench(std::string name, int nthreads) {
     auto init = [] {};
     auto fn = [&](int) {
       hazptr_holder<std::atomic> hptr;
-      for (int i = 0; i < 1000; i++) {
+      for (int i = 0; i < ops / 1000; i++) {
         hazptr_cleanup();
+      }
+    };
+    auto endFn = [] {};
+    return run_once(nthreads, init, fn, endFn);
+  };
+  return bench(name, ops, repFn);
+}
+
+uint64_t batch_bench(std::string name, int nthreads) {
+  struct Foo : public hazptr_obj_base<Foo> {};
+  // Push unrelated objects into the domain tagged list
+  hazptr_obj_batch batch;
+  for (int i = 0; i < 999; ++i) {
+    auto p = new Foo;
+    p->set_batch_tag(&batch);
+    p->retire();
+  }
+  auto repFn = [&] {
+    auto init = [] {};
+    auto fn = [&](int tid) {
+      for (int j = tid; j < ops; j += nthreads) {
+        hazptr_obj_batch b;
       }
     };
     auto endFn = [] {};
@@ -1329,8 +1502,10 @@ void benches() {
       std::cout << j << "-item list protect all                      ";
       list_protect_all_bench("", i, j);
     }
-    std::cout << "hazptr_cleanup                                ";
+    std::cout << "1/1000 hazptr_cleanup                         ";
     cleanup_bench("", i);
+    std::cout << "Life cycle of unused tagged obj batch         ";
+    batch_bench("", i);
   }
 }
 
@@ -1360,7 +1535,8 @@ allocate/retire/reclaim object                     70 ns     68 ns     67 ns
 20-item list hand-over-hand                        48 ns     43 ns     41 ns
 20-item list protect all - own hazptr              28 ns     28 ns     28 ns
 20-item list protect all                           31 ns     29 ns     29 ns
-hazptr_cleanup                                      2 ns      1 ns      1 ns
+1/1000 hazptr_cleanup                               2 ns      1 ns      1 ns
+Life cycle of unused tagged obj batch               1 ns      1 ns      1 ns
 ================================ 10 threads ================================
 10x construct/destruct hazptr_holder               11 ns      8 ns      8 ns
 10x construct/destruct hazptr_array<1>              8 ns      7 ns      7 ns
@@ -1378,5 +1554,6 @@ allocate/retire/reclaim object                     20 ns     17 ns     16 ns
 20-item list hand-over-hand                         6 ns      6 ns      6 ns
 20-item list protect all - own hazptr               4 ns      4 ns      4 ns
 20-item list protect all                            5 ns      4 ns      4 ns
-hazptr_cleanup                                    119 ns    113 ns     97 ns
- */
+1/1000 hazptr_cleanup                             119 ns    113 ns     97 ns
+Life cycle of unused tagged obj batch               0 ns      0 ns      0 ns
+*/

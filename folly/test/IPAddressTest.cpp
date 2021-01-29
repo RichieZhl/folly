@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <sys/types.h>
 
 #include <string>
@@ -419,6 +420,11 @@ TEST(IPAddress, CtorDefault) {
   EXPECT_EQ(IPAddressV4("0.0.0.0"), v4);
   IPAddressV6 v6;
   EXPECT_EQ(IPAddressV6("::0"), v6);
+  IPAddress v0;
+  EXPECT_EQ(IPAddress(), v0);
+  EXPECT_NE(v0, v4);
+  EXPECT_NE(v0, v6);
+  EXPECT_NE(v4, v6);
 }
 
 TEST(IPAddressV4, validate) {
@@ -542,6 +548,14 @@ TEST(IPAddress, CtorSockaddr) {
     addr.sin_addr = sin_addr;
 
     EXPECT_THROW(IPAddress((sockaddr*)&addr), IPAddressFormatException);
+  }
+  // test none address
+  {
+    IPAddress ipAddr;
+    EXPECT_TRUE(ipAddr.empty());
+    EXPECT_FALSE(ipAddr.isV4());
+    EXPECT_FALSE(ipAddr.isV6());
+    EXPECT_EQ("", ipAddr.str());
   }
 }
 
@@ -863,6 +877,7 @@ TEST(IPAddress, V6Types) {
         return "teredo";
       case IPAddressV6::Type::T6TO4:
         return "6to4";
+      case IPAddressV6::Type::NORMAL:
       default:
         return "default";
     }

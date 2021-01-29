@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -75,7 +75,7 @@ class FunctionScheduler {
    * If isPoisson is true, then use std::poisson_distribution to pick the
    * interval between each invocation of the function.
    *
-   * If isPoisson os false, then always use fixed the interval specified to
+   * If isPoisson is false, then always use the fixed interval specified to
    * addFunction().
    */
   struct LatencyDistribution {

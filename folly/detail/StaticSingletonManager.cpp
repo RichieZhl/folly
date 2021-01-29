@@ -1,11 +1,11 @@
 /*
- * Copyright 2016-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,18 +25,26 @@ namespace detail {
 
 namespace {
 
-class StaticSingletonManagerImpl {
+class StaticSingletonManagerWithRttiImpl {
  public:
-  void* create(std::type_info const& key, void* (*make)(void*), void* ctx) {
-    auto& e = entry(key);
-    std::lock_guard<std::mutex> lock(e.mutex);
-    return e.ptr ? e.ptr : (e.ptr = make(ctx));
+  using Make = void*();
+  using Cache = std::atomic<void*>;
+
+  void* create(std::type_info const& key, Make& make, Cache& cache) {
+    auto const ptr = entry(key).get(make);
+    cache.store(ptr, std::memory_order_release);
+    return ptr;
   }
 
  private:
   struct Entry {
     void* ptr{};
     std::mutex mutex;
+
+    void* get(Make& make) {
+      std::lock_guard<std::mutex> lock(mutex);
+      return ptr ? ptr : (ptr = make());
+    }
   };
 
   Entry& entry(std::type_info const& key) {
@@ -51,10 +59,10 @@ class StaticSingletonManagerImpl {
 
 } // namespace
 
-void* StaticSingletonManager::create_(Key const& key, Make* make, void* ctx) {
+void* StaticSingletonManagerWithRtti::create_(Arg& arg) {
   // This Leaky Meyers Singleton must always live in the .cpp file.
-  static auto& instance = *new StaticSingletonManagerImpl();
-  return instance.create(key, make, ctx);
+  static auto& instance = *new StaticSingletonManagerWithRttiImpl();
+  return instance.create(*arg.key, arg.make, arg.cache);
 }
 
 } // namespace detail

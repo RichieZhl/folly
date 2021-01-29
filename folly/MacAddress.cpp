@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,6 +16,7 @@
 
 #include <folly/MacAddress.h>
 
+#include <cassert>
 #include <ostream>
 
 #include <folly/Exception.h>
@@ -38,7 +39,7 @@ MacAddress::MacAddress(StringPiece str) {
 
 MacAddress MacAddress::createMulticast(IPAddressV6 v6addr) {
   // This method should only be used for multicast addresses.
-  DCHECK(v6addr.isMulticast());
+  assert(v6addr.isMulticast());
 
   uint8_t bytes[SIZE];
   bytes[0] = 0x33;

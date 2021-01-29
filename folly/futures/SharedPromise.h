@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -34,28 +34,17 @@ namespace folly {
  * callbacks on the same Future (which is indefinitely unsupported), consider
  * refactoring to use SharedPromise to "split" the Future.
  *
- * The ShardPromise must be kept alive manually. Consider FutureSplitter for
+ * The SharedPromise must be kept alive manually. Consider FutureSplitter for
  * automatic lifetime management.
  */
 template <class T>
 class SharedPromise {
  public:
-  SharedPromise() = default;
-  ~SharedPromise() = default;
-
-  // not copyable
-  SharedPromise(SharedPromise const&) = delete;
-  SharedPromise& operator=(SharedPromise const&) = delete;
-
-  // movable
-  SharedPromise(SharedPromise<T>&&) noexcept;
-  SharedPromise& operator=(SharedPromise<T>&&) noexcept;
-
   /**
    * Return a Future tied to the shared core state. Unlike Promise::getFuture,
    * this can be called an unlimited number of times per SharedPromise.
    */
-  SemiFuture<T> getSemiFuture();
+  SemiFuture<T> getSemiFuture() const;
 
   /**
    * Return a Future tied to the shared core state. Unlike Promise::getFuture,
@@ -64,10 +53,10 @@ class SharedPromise {
    *       appropriate executor to .via on the returned SemiFuture to get a
    *       valid Future where necessary.
    */
-  Future<T> getFuture();
+  Future<T> getFuture() const;
 
   /** Return the number of Futures associated with this SharedPromise */
-  size_t size();
+  size_t size() const;
 
   /** Fulfill the SharedPromise with an exception_wrapper */
   void setException(exception_wrapper ew);
@@ -108,14 +97,42 @@ class SharedPromise {
   template <class F>
   void setWith(F&& func);
 
-  bool isFulfilled();
+  bool isFulfilled() const;
 
  private:
-  std::mutex mutex_;
-  size_t size_{0};
-  bool hasValue_{false};
-  Try<T> try_;
-  std::vector<Promise<T>> promises_;
+  // this allows SharedPromise move-ctor/move-assign to be defaulted
+  struct Mutex : std::mutex {
+    Mutex() = default;
+    Mutex(Mutex&&) noexcept {}
+    Mutex& operator=(Mutex&&) noexcept {
+      return *this;
+    }
+  };
+
+  template <typename V>
+  struct Defaulted {
+    using Noexcept = StrictConjunction<
+        std::is_nothrow_default_constructible<V>,
+        std::is_nothrow_move_constructible<V>,
+        std::is_nothrow_move_assignable<V>>;
+    V value{V()};
+    Defaulted() = default;
+    Defaulted(Defaulted&& that) noexcept(Noexcept::value)
+        : value(std::exchange(that.value, V())) {}
+    Defaulted& operator=(Defaulted&& that) noexcept(Noexcept::value) {
+      value = std::exchange(that.value, V());
+      return *this;
+    }
+  };
+
+  bool hasResult() const {
+    return try_.value.hasValue() || try_.value.hasException();
+  }
+
+  mutable Mutex mutex_;
+  mutable Defaulted<size_t> size_;
+  Defaulted<Try<T>> try_;
+  mutable std::vector<Promise<T>> promises_;
   std::function<void(exception_wrapper const&)> interruptHandler_;
 };
 

@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,6 +17,7 @@
 #include <folly/hash/detail/ChecksumDetail.h>
 
 #include <array>
+#include <utility>
 
 #include <folly/Bits.h>
 #include <folly/ConstexprMath.h>
@@ -61,7 +62,7 @@ struct gf_powers_memo<0, m> {
 template <uint32_t m>
 struct gf_powers_make {
   template <size_t... i>
-  constexpr auto operator()(index_sequence<i...>) const {
+  constexpr auto operator()(std::index_sequence<i...>) const {
     return std::array<uint32_t, sizeof...(i)>{{gf_powers_memo<i, m>::value...}};
   }
 };
@@ -124,9 +125,9 @@ static constexpr uint32_t crc32_m = 0xedb88320;
  * Pre-calculated powers tables for crc32c and crc32.
  */
 static constexpr std::array<uint32_t, 62> const crc32c_powers =
-    gf_powers_make<crc32c_m>{}(make_index_sequence<62>{});
+    gf_powers_make<crc32c_m>{}(std::make_index_sequence<62>{});
 static constexpr std::array<uint32_t, 62> const crc32_powers =
-    gf_powers_make<crc32_m>{}(make_index_sequence<62>{});
+    gf_powers_make<crc32_m>{}(std::make_index_sequence<62>{});
 
 template <typename F>
 static uint32_t crc32_append_zeroes(

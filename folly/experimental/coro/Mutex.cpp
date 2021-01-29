@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -59,7 +59,7 @@ void Mutex::unlock() noexcept {
     assert(currentState != unlockedState());
     assert(currentState != nullptr);
 
-    auto* waiter = static_cast<LockOperation*>(currentState);
+    auto* waiter = static_cast<LockAwaiter*>(currentState);
     do {
       auto* temp = waiter->next_;
       waiter->next_ = waitersHead;
@@ -75,7 +75,7 @@ void Mutex::unlock() noexcept {
   waitersHead->awaitingCoroutine_.resume();
 }
 
-bool Mutex::lockAsyncImpl(LockOperation* awaiter) {
+bool Mutex::lockAsyncImpl(LockAwaiter* awaiter) {
   void* oldValue = state_.load(std::memory_order_relaxed);
   while (true) {
     if (oldValue == unlockedState()) {
@@ -94,7 +94,7 @@ bool Mutex::lockAsyncImpl(LockOperation* awaiter) {
       // It looks like the mutex is currently locked.
       // Try to queue this waiter to the list of waiters.
       void* newValue = awaiter;
-      awaiter->next_ = static_cast<LockOperation*>(oldValue);
+      awaiter->next_ = static_cast<LockAwaiter*>(oldValue);
       if (state_.compare_exchange_weak(
               oldValue,
               newValue,

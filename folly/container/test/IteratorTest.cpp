@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -272,7 +272,8 @@ TEST(EmplaceIterator, HintEmplacerTest) {
         v2.begin(),
         v2.end(),
         hint_emplacer(diff, diff.end()));
-    ASSERT_EQ(diff, std::set<O>({O(1), O(3)}));
+    std::set<O> expected = {O(1), O(3)};
+    ASSERT_EQ(diff, expected);
   }
 }
 

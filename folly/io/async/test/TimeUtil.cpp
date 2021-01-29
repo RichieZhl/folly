@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,16 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #ifndef __STDC_FORMAT_MACROS
 #define __STDC_FORMAT_MACROS
 #endif
 
 #include <folly/io/async/test/TimeUtil.h>
 
-#include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <cerrno>
 #ifdef __linux__
 #include <sys/utsname.h>
 #endif
@@ -32,6 +33,7 @@
 #include <stdexcept>
 
 #include <folly/Conv.h>
+#include <folly/Portability.h>
 #include <folly/ScopeGuard.h>
 #include <folly/String.h>
 #include <folly/portability/Unistd.h>
@@ -185,7 +187,7 @@ static nanoseconds getSchedTimeWaiting(pid_t tid) {
       throw std::runtime_error(
           folly::to<string>("failed to read process schedstat file", errno));
     }
-    size_t bytesRead = size_t(bytesReadRet);
+    auto bytesRead = size_t(bytesReadRet);
 
     if (buf[bytesRead - 1] != '\n') {
       throw std::runtime_error("expected newline at end of schedstat data");
@@ -274,6 +276,13 @@ bool checkTimeout(
   nanoseconds effectiveElapsedTime(0);
   if (elapsedTime > timeExcluded) {
     effectiveElapsedTime = elapsedTime - timeExcluded;
+  }
+
+  if (!kIsLinux) {
+    // We can only compute timeExcluded accurately on Linux.
+    // On other platforms, just increase the amount of tolerance allowed to
+    // account for time possibly spent waiting to be scheduled.
+    tolerance += 20ms;
   }
 
   // On x86 Linux, sleep calls generally have precision only to the nearest

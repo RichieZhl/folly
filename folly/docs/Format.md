@@ -9,9 +9,6 @@ and dynamically-typed `folly::dynamic` objects, and can extract values from
 random-access containers and string-keyed maps.  In many cases, `format` is
 faster than `sprintf` as well as being fully type-safe.
 
-To use `format`, you need to be using gcc 4.6 or later.  You'll want to include
-`folly/Format.h`.
-
 ### Overview
 ***
 
@@ -102,6 +99,10 @@ std::cout << format("{0:05d} decimal = {0:04x} hex", 42);
 std::string s = format("The only answer is {}", 42).str();
 std::cout << s;
 // => "The only answer is 42"
+
+// Decimal precision usage
+std::cout << format("Only 2 decimals is {:.2f}", 23.34134534535);
+// => "Only 2 decimals is 23.34"
 ```
 
 

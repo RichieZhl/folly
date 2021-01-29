@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <atomic>
@@ -26,7 +27,7 @@
 #include <folly/synchronization/detail/ThreadCachedInts.h>
 #include <folly/synchronization/detail/ThreadCachedLists.h>
 
-// Implementation of proposed RCU C++ API
+// Implementation of proposed Read-Copy-Update (RCU) C++ API
 // http://open-std.org/JTC1/SC22/WG21/docs/papers/2017/p0566r3.pdf
 
 // Overview
@@ -175,7 +176,7 @@
 //   callers should only ever use the default, global domain.
 //
 //   Creation of a domain takes a template tag argument, which
-//   defaults to void. To access different domains, you have to pass a
+//   defaults to RcuTag. To access different domains, you have to pass a
 //   different tag.  The global domain is preferred for almost all
 //   purposes, unless a different executor is required.
 //
@@ -207,7 +208,13 @@
 //  - Restrictions on retired()ed functions:
 //    Any operation is safe from within a retired function's
 //    execution; you can retire additional functions or add a new domain call to
-//    the domain.
+//    the domain.  However, when using the default domain or the default
+//    executor, it is not legal to hold a lock across rcu_retire or call
+//    that is acquired by the deleter.  This is normally not a problem when
+//    using the default deleter delete, which does not acquire any user locks.
+//    However, even when using the default deleter, an object having a
+//    user-defined destructor that acquires locks held across the corresponding
+//    call to rcu_retire can still deadlock.
 //  - rcu_domain destruction:
 //    Destruction of a domain assumes previous synchronization: all remaining
 //    call and retire calls are immediately added to the executor.
@@ -288,9 +295,9 @@ class rcu_domain;
 
 // Opaque token used to match up lock_shared() and unlock_shared()
 // pairs.
+template <typename Tag>
 class rcu_token {
  public:
-  rcu_token(uint64_t epoch) : epoch_(epoch) {}
   rcu_token() {}
   ~rcu_token() = default;
 
@@ -300,13 +307,29 @@ class rcu_token {
   rcu_token& operator=(rcu_token&& other) = default;
 
  private:
-  template <typename Tag>
-  friend class rcu_domain;
+  explicit rcu_token(uint64_t epoch) : epoch_(epoch) {}
+
+  friend class rcu_domain<Tag>;
   uint64_t epoch_;
 };
 
-// For most usages, rcu_domain is unnecessary, and you can use
-// rcu_reader and rcu_retire/synchronize_rcu directly.
+// Defines an RCU domain.  RCU readers within a given domain block updaters
+// (synchronize_rcu, call, retire, or rcu_retire) only within that same
+// domain, and have no effect on updaters associated with other rcu_domains.
+//
+// Custom domains are normally not necessary because the default domain works
+// in most cases.  But it makes sense to create a separate domain for uses
+// having unusually long read-side critical sections (many milliseconds)
+// or uses that cannot tolerate moderately long read-side critical sections
+// from others.
+//
+// The executor runs grace-period processing and invokes deleters.
+// The default of QueuedImmediateExecutor is very light weight (compared
+// to, say, a thread pool).  However, the flip side of this light weight
+// is that the overhead of this processing and invocation is incurred within
+// the executor invoking the RCU primitive, for example, rcu_retire().
+//
+// The domain must survive all its readers.
 template <typename Tag>
 class rcu_domain {
   using list_head = typename detail::ThreadCachedLists<Tag>::ListHead;
@@ -317,7 +340,7 @@ class rcu_domain {
    * If an executor is passed, it is used to run calls and delete
    * retired objects.
    */
-  rcu_domain(Executor* executor = nullptr) noexcept;
+  explicit rcu_domain(Executor* executor = nullptr) noexcept;
 
   rcu_domain(const rcu_domain&) = delete;
   rcu_domain(rcu_domain&&) = delete;
@@ -330,8 +353,8 @@ class rcu_domain {
   // all preceding lock_shared() sections are finished.
 
   // Note: can potentially allocate on thread first use.
-  FOLLY_ALWAYS_INLINE rcu_token lock_shared();
-  FOLLY_ALWAYS_INLINE void unlock_shared(rcu_token&&);
+  FOLLY_ALWAYS_INLINE rcu_token<Tag> lock_shared();
+  FOLLY_ALWAYS_INLINE void unlock_shared(rcu_token<Tag>&&);
 
   // Call a function after concurrent critical sections have finished.
   // Does not block unless the queue is full, then may block to wait
@@ -390,10 +413,10 @@ inline rcu_domain<RcuTag>* rcu_default_domain() {
 template <typename Tag = RcuTag>
 class rcu_reader_domain {
  public:
-  FOLLY_ALWAYS_INLINE rcu_reader_domain(
+  explicit FOLLY_ALWAYS_INLINE rcu_reader_domain(
       rcu_domain<Tag>* domain = rcu_default_domain()) noexcept
       : epoch_(domain->lock_shared()), domain_(domain) {}
-  rcu_reader_domain(
+  explicit rcu_reader_domain(
       std::defer_lock_t,
       rcu_domain<Tag>* domain = rcu_default_domain()) noexcept
       : domain_(domain) {}
@@ -433,7 +456,7 @@ class rcu_reader_domain {
   }
 
  private:
-  Optional<rcu_token> epoch_;
+  Optional<rcu_token<Tag>> epoch_;
   rcu_domain<Tag>* domain_;
 };
 

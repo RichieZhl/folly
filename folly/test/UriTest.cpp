@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -407,4 +407,9 @@ TEST(Uri, Simple) {
     EXPECT_EQ("is@another:valid:uri", u.path());
     EXPECT_EQ(s, u.fbstr());
   }
+}
+
+TEST(Uri, BadPortThrowsInvalidArgument) {
+  constexpr folly::StringPiece s = "http://localhost:9999999999999999999/";
+  EXPECT_THROW(Uri{s}, std::invalid_argument);
 }

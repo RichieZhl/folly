@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <atomic>
@@ -30,15 +31,8 @@ class FiberManager;
 
 class SimpleLoopController : public LoopController {
  public:
-  SimpleLoopController() : fm_(nullptr), stopRequested_(false) {}
-
-  ~SimpleLoopController() {
-    scheduled_ = false;
-  }
-
-  void setTimeFunc(Function<TimePoint()> timeFunc) {
-    timeFunc_ = std::move(timeFunc);
-  }
+  SimpleLoopController();
+  ~SimpleLoopController();
 
   /**
    * Run FiberManager loop; if no ready task are present,
@@ -47,29 +41,22 @@ class SimpleLoopController : public LoopController {
    */
   template <typename F>
   void loop(F&& func) {
+    loopThread_.store(std::this_thread::get_id(), std::memory_order_release);
+
     bool waiting = false;
     stopRequested_ = false;
 
     while (LIKELY(waiting || !stopRequested_)) {
       func();
-
-      auto time = timeFunc_();
-
-      for (size_t i = 0; i < scheduledFuncs_.size(); ++i) {
-        if (scheduledFuncs_[i].first <= time) {
-          scheduledFuncs_[i].second();
-          swap(scheduledFuncs_[i], scheduledFuncs_.back());
-          scheduledFuncs_.pop_back();
-          --i;
-        }
-      }
-
+      runTimeouts();
       if (scheduled_) {
         scheduled_ = false;
         runLoop();
         waiting = fm_->hasTasks();
       }
     }
+
+    loopThread_.store({}, std::memory_order_release);
   }
 
   /**
@@ -101,8 +88,13 @@ class SimpleLoopController : public LoopController {
     scheduled_ = true;
   }
 
-  void timedSchedule(std::function<void()> func, TimePoint time) override {
-    scheduledFuncs_.emplace_back(time, std::move(func));
+  HHWheelTimer& timer() override {
+    return *timer_;
+  }
+
+  bool isInLoopThread() const {
+    auto tid = loopThread_.load(std::memory_order_relaxed);
+    return tid == std::thread::id() || tid == std::this_thread::get_id();
   }
 
  private:
@@ -111,8 +103,11 @@ class SimpleLoopController : public LoopController {
   bool stopRequested_;
   std::atomic<int> remoteScheduleCalled_{0};
   int remoteLoopRun_{0};
-  std::vector<std::pair<TimePoint, std::function<void()>>> scheduledFuncs_;
-  Function<TimePoint()> timeFunc_{[] { return Clock::now(); }};
+  std::atomic<std::thread::id> loopThread_;
+
+  class SimpleTimeoutManager;
+  std::unique_ptr<SimpleTimeoutManager> timeoutManager_;
+  std::shared_ptr<HHWheelTimer> timer_;
 
   /* LoopController interface */
 
@@ -124,6 +119,8 @@ class SimpleLoopController : public LoopController {
     ++remoteScheduleCalled_;
     scheduled_ = true;
   }
+
+  void runTimeouts();
 
   friend class FiberManager;
 };

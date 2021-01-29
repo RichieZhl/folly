@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/futures/ThreadWheelTimekeeper.h>
 
 #include <folly/Singleton.h>
@@ -44,8 +45,8 @@ struct WTCallback : public std::enable_shared_from_this<WTCallback>,
     return cob;
   }
 
-  Future<Unit> getFuture() {
-    return promise_.getFuture();
+  SemiFuture<Unit> getSemiFuture() {
+    return promise_.getSemiFuture();
   }
 
   FOLLY_NODISCARD Promise<Unit> stealPromise() {
@@ -120,9 +121,9 @@ ThreadWheelTimekeeper::~ThreadWheelTimekeeper() {
   thread_.join();
 }
 
-Future<Unit> ThreadWheelTimekeeper::after(Duration dur) {
+SemiFuture<Unit> ThreadWheelTimekeeper::after(Duration dur) {
   auto cob = WTCallback::create(&eventBase_);
-  auto f = cob->getFuture();
+  auto f = cob->getSemiFuture();
   //
   // Even shared_ptr of cob is captured in lambda this is still somewhat *racy*
   // because it will be released once timeout is scheduled. So technically there
@@ -137,20 +138,8 @@ Future<Unit> ThreadWheelTimekeeper::after(Duration dur) {
   // callback has either been executed, or will never be executed. So we are
   // fine here.
   //
-  if (!eventBase_.runInEventBaseThread(
-          [this, cob, dur] { wheelTimer_->scheduleTimeout(cob.get(), dur); })) {
-    // Release promise to break the circular reference. Because if
-    // scheduleTimeout fails, there is nothing to *promise*. Internally
-    // Core would automatically set an exception result when Promise is
-    // destructed before fulfilling.
-    // This is either called from EventBase thread, or here.
-    // They are somewhat racy but given the rare chance this could fail,
-    // I don't see it is introducing any problem yet.
-    auto promise = cob->stealPromise();
-    if (!promise.isFulfilled()) {
-      promise.setException(FutureNoTimekeeper{});
-    }
-  }
+  eventBase_.runInEventBaseThread(
+      [this, cob, dur] { wheelTimer_->scheduleTimeout(cob.get(), dur); });
   return f;
 }
 

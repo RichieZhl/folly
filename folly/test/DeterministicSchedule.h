@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,11 +17,11 @@
 #pragma once
 
 #include <assert.h>
-#include <boost/noncopyable.hpp>
 #include <errno.h>
 #include <glog/logging.h>
 #include <atomic>
 #include <functional>
+#include <list>
 #include <mutex>
 #include <queue>
 #include <thread>
@@ -29,10 +29,11 @@
 #include <vector>
 
 #include <folly/ScopeGuard.h>
+#include <folly/SingletonThreadLocal.h>
 #include <folly/concurrency/CacheLocality.h>
 #include <folly/detail/Futex.h>
-#include <folly/portability/Semaphore.h>
 #include <folly/synchronization/detail/AtomicUtils.h>
+#include <folly/synchronization/test/Semaphore.h>
 
 namespace folly {
 namespace test {
@@ -51,6 +52,77 @@ namespace test {
 using AuxAct = std::function<void(bool)>;
 using AuxChk = std::function<void(uint64_t)>;
 
+struct DSchedThreadId {
+  unsigned val;
+  explicit constexpr DSchedThreadId() : val(0) {}
+  explicit constexpr DSchedThreadId(unsigned v) : val(v) {}
+  unsigned operator=(unsigned v) {
+    return val = v;
+  }
+};
+
+class DSchedTimestamp {
+ public:
+  constexpr explicit DSchedTimestamp() : val_(0) {}
+  DSchedTimestamp advance() {
+    return DSchedTimestamp(++val_);
+  }
+  bool atLeastAsRecentAs(const DSchedTimestamp& other) const {
+    return val_ >= other.val_;
+  }
+  void sync(const DSchedTimestamp& other) {
+    val_ = std::max(val_, other.val_);
+  }
+  bool initialized() const {
+    return val_ > 0;
+  }
+  static constexpr DSchedTimestamp initial() {
+    return DSchedTimestamp(1);
+  }
+
+ protected:
+  constexpr explicit DSchedTimestamp(size_t v) : val_(v) {}
+
+ private:
+  size_t val_;
+};
+
+class ThreadTimestamps {
+ public:
+  void sync(const ThreadTimestamps& src);
+  DSchedTimestamp advance(DSchedThreadId tid);
+
+  void setIfNotPresent(DSchedThreadId tid, DSchedTimestamp ts);
+  void clear();
+  bool atLeastAsRecentAs(DSchedThreadId tid, DSchedTimestamp ts) const;
+  bool atLeastAsRecentAsAny(const ThreadTimestamps& src) const;
+
+ private:
+  std::vector<DSchedTimestamp> timestamps_;
+};
+
+struct ThreadInfo {
+  ThreadInfo() = delete;
+  explicit ThreadInfo(DSchedThreadId tid) {
+    acqRelOrder_.setIfNotPresent(tid, DSchedTimestamp::initial());
+  }
+  ThreadTimestamps acqRelOrder_;
+  ThreadTimestamps acqFenceOrder_;
+  ThreadTimestamps relFenceOrder_;
+};
+
+class ThreadSyncVar {
+ public:
+  ThreadSyncVar() = default;
+
+  void acquire();
+  void release();
+  void acq_rel();
+
+ private:
+  ThreadTimestamps order_;
+};
+
 /**
  * DeterministicSchedule coordinates the inter-thread communication of a
  * set of threads under test, so that despite concurrency the execution is
@@ -64,7 +136,7 @@ using AuxChk = std::function<void(uint64_t)>;
  * constructor, DeterministicSchedule::join(thr) instead of thr.join(),
  * and access semaphores via the helper functions in DeterministicSchedule.
  * Locks are not yet supported, although they would be easy to add with
- * the same strategy as the mapping of sem_wait.
+ * the same strategy as the mapping of Sem::wait.
  *
  * The actual schedule is defined by a function from n -> [0,n). At
  * each step, the function will be given the number of active threads
@@ -72,15 +144,19 @@ using AuxChk = std::function<void(uint64_t)>;
  * Invocations of the scheduler function will be serialized, but will
  * occur from multiple threads.  A good starting schedule is uniform(0).
  */
-class DeterministicSchedule : boost::noncopyable {
+class DeterministicSchedule {
  public:
+  using Sem = Semaphore;
+
   /**
    * Arranges for the current thread (and all threads created by
    * DeterministicSchedule::thread on a thread participating in this
    * schedule) to participate in a deterministic schedule.
    */
-  explicit DeterministicSchedule(
-      const std::function<size_t(size_t)>& scheduler);
+  explicit DeterministicSchedule(std::function<size_t(size_t)> scheduler);
+
+  DeterministicSchedule(const DeterministicSchedule&) = delete;
+  DeterministicSchedule& operator=(const DeterministicSchedule&) = delete;
 
   /** Completes the schedule. */
   ~DeterministicSchedule();
@@ -122,7 +198,9 @@ class DeterministicSchedule : boost::noncopyable {
   template <typename Func, typename... Args>
   static inline std::thread thread(Func&& func, Args&&... args) {
     // TODO: maybe future versions of gcc will allow forwarding to thread
-    auto sched = tls_sched;
+    atomic_thread_fence(std::memory_order_seq_cst);
+    auto& tls = TLState::get();
+    auto sched = tls.sched;
     auto sem = sched ? sched->beforeThreadCreate() : nullptr;
     auto child = std::thread(
         [=](Args... a) {
@@ -152,15 +230,24 @@ class DeterministicSchedule : boost::noncopyable {
   /** Calls child.join() as part of a deterministic schedule. */
   static void join(std::thread& child);
 
-  /** Calls sem_post(sem) as part of a deterministic schedule. */
-  static void post(sem_t* sem);
+  /** Waits for each thread in children to reach the end of their
+   * thread function without allowing them to fully terminate. Then,
+   * allow one child at a time to fully terminate and join each one.
+   * This functionality is important to protect shared access that can
+   * take place after beforeThreadExit() has already been invoked,
+   * for example when executing thread local destructors.
+   */
+  static void joinAll(std::vector<std::thread>& children);
 
-  /** Calls sem_trywait(sem) as part of a deterministic schedule, returning
+  /** Calls sem->post() as part of a deterministic schedule. */
+  static void post(Sem* sem);
+
+  /** Calls sem->try_wait() as part of a deterministic schedule, returning
    *  true on success and false on transient failure. */
-  static bool tryWait(sem_t* sem);
+  static bool tryWait(Sem* sem);
 
-  /** Calls sem_wait(sem) as part of a deterministic schedule. */
-  static void wait(sem_t* sem);
+  /** Calls sem->wait() as part of a deterministic schedule. */
+  static void wait(Sem* sem);
 
   /** Used scheduler_ to get a random number b/w [0, n). If tls_sched is
    *  not set-up it falls back to std::rand() */
@@ -186,22 +273,65 @@ class DeterministicSchedule : boost::noncopyable {
   static void clearAuxChk();
 
   /** Remove the current thread's semaphore from sems_ */
-  static sem_t* descheduleCurrentThread();
+  static Sem* descheduleCurrentThread();
+
+  /** Returns true if the current thread has already completed
+   * the thread function, for example if the thread is executing
+   * thread local destructors. */
+  static bool isCurrentThreadExiting() {
+    auto& tls = TLState::get();
+    return tls.exiting;
+  }
 
   /** Add sem back into sems_ */
-  static void reschedule(sem_t* sem);
+  static void reschedule(Sem* sem);
+
+  static bool isActive() {
+    auto& tls = TLState::get();
+    return tls.sched != nullptr;
+  }
+
+  static DSchedThreadId getThreadId() {
+    auto& tls = TLState::get();
+    assert(tls.sched != nullptr);
+    return tls.threadId;
+  }
+
+  static ThreadInfo& getCurrentThreadInfo();
+
+  static void atomic_thread_fence(std::memory_order mo);
 
  private:
-  static FOLLY_TLS sem_t* tls_sem;
-  static FOLLY_TLS DeterministicSchedule* tls_sched;
-  static FOLLY_TLS unsigned tls_threadId;
-  static thread_local AuxAct tls_aux_act;
+  struct PerThreadState {
+    // delete the constructors and assignment operators for sanity
+    //
+    // but... we can't delete the move constructor and assignment operators
+    // because those are required before C++17 in the implementation of
+    // SingletonThreadLocal
+    PerThreadState(const PerThreadState&) = delete;
+    PerThreadState& operator=(const PerThreadState&) = delete;
+    PerThreadState(PerThreadState&&) = default;
+    PerThreadState& operator=(PerThreadState&&) = default;
+    PerThreadState() = default;
+
+    Sem* sem{nullptr};
+    DeterministicSchedule* sched{nullptr};
+    bool exiting{false};
+    DSchedThreadId threadId{};
+    AuxAct aux_act{};
+  };
+  using TLState = SingletonThreadLocal<PerThreadState>;
   static AuxChk aux_chk;
 
   std::function<size_t(size_t)> scheduler_;
-  std::vector<sem_t*> sems_;
+  std::vector<Sem*> sems_;
   std::unordered_set<std::thread::id> active_;
-  std::unordered_map<std::thread::id, sem_t*> joins_;
+  std::unordered_map<std::thread::id, Sem*> joins_;
+  std::unordered_map<std::thread::id, Sem*> exitingSems_;
+
+  std::vector<ThreadInfo> threadInfoMap_;
+  ThreadTimestamps seqCstFenceOrder_;
+
   unsigned nextThreadId_;
   /* step_ keeps count of shared accesses that correspond to user
    * synchronization steps (atomic accesses for now).
@@ -211,9 +341,10 @@ class DeterministicSchedule : boost::noncopyable {
    * functions for some shared accesses. */
   uint64_t step_;
 
-  sem_t* beforeThreadCreate();
-  void afterThreadCreate(sem_t*);
+  Sem* beforeThreadCreate();
+  void afterThreadCreate(Sem*);
   void beforeThreadExit();
+  void waitForBeforeThreadExit(std::thread& child);
   /** Calls user-defined auxiliary function (if any) */
   void callAux(bool);
 };
@@ -469,6 +600,126 @@ detail::FutexResult futexWaitImpl(
     std::chrono::steady_clock::time_point const* absSteadyTime,
     uint32_t waitMask);
 
+/* Generic futex extensions to allow sharing between DeterministicAtomic and
+ * BufferedDeterministicAtomic.*/
+template <template <typename> class Atom>
+int deterministicFutexWakeImpl(
+    const detail::Futex<Atom>* futex,
+    std::mutex& futexLock,
+    std::unordered_map<
+        const detail::Futex<Atom>*,
+        std::list<std::pair<uint32_t, bool*>>>& futexQueues,
+    int count,
+    uint32_t wakeMask) {
+  using namespace test;
+  using namespace std::chrono;
+
+  int rv = 0;
+  DeterministicSchedule::beforeSharedAccess();
+  futexLock.lock();
+  if (futexQueues.count(futex) > 0) {
+    auto& queue = futexQueues[futex];
+    auto iter = queue.begin();
+    while (iter != queue.end() && rv < count) {
+      auto cur = iter++;
+      if ((cur->first & wakeMask) != 0) {
+        *(cur->second) = true;
+        rv++;
+        queue.erase(cur);
+      }
+    }
+    if (queue.empty()) {
+      futexQueues.erase(futex);
+    }
+  }
+  futexLock.unlock();
+  FOLLY_TEST_DSCHED_VLOG(
+      "futexWake(" << futex << ", " << count << ", " << std::hex << wakeMask
+                   << ") -> " << rv);
+  DeterministicSchedule::afterSharedAccess();
+  return rv;
+}
+
+template <template <typename> class Atom>
+detail::FutexResult deterministicFutexWaitImpl(
+    const detail::Futex<Atom>* futex,
+    std::mutex& futexLock,
+    std::unordered_map<
+        const detail::Futex<Atom>*,
+        std::list<std::pair<uint32_t, bool*>>>& futexQueues,
+    uint32_t expected,
+    std::chrono::system_clock::time_point const* absSystemTimeout,
+    std::chrono::steady_clock::time_point const* absSteadyTimeout,
+    uint32_t waitMask) {
+  using namespace test;
+  using namespace std::chrono;
+  using namespace folly::detail;
+
+  bool hasTimeout = absSystemTimeout != nullptr || absSteadyTimeout != nullptr;
+  bool awoken = false;
+  FutexResult result = FutexResult::AWOKEN;
+
+  DeterministicSchedule::beforeSharedAccess();
+  FOLLY_TEST_DSCHED_VLOG(
+      "futexWait(" << futex << ", " << std::hex << expected << ", .., "
+                   << std::hex << waitMask << ") beginning..");
+  futexLock.lock();
+  // load_direct avoids deadlock on inner call to beforeSharedAccess
+  if (futex->load_direct() == expected) {
+    auto& queue = futexQueues[futex];
+    queue.emplace_back(waitMask, &awoken);
+    auto ours = queue.end();
+    ours--;
+    while (!awoken) {
+      futexLock.unlock();
+      DeterministicSchedule::afterSharedAccess();
+      DeterministicSchedule::beforeSharedAccess();
+      futexLock.lock();
+
+      // Simulate spurious wake-ups, timeouts each time with
+      // a 10% probability if we haven't been woken up already
+      if (!awoken && hasTimeout &&
+          DeterministicSchedule::getRandNumber(100) < 10) {
+        assert(futexQueues.count(futex) != 0 && &futexQueues[futex] == &queue);
+        queue.erase(ours);
+        if (queue.empty()) {
+          futexQueues.erase(futex);
+        }
+        // Simulate ETIMEDOUT 90% of the time and other failures
+        // remaining time
+        result = DeterministicSchedule::getRandNumber(100) >= 10
+            ? FutexResult::TIMEDOUT
+            : FutexResult::INTERRUPTED;
+        break;
+      }
+    }
+  } else {
+    result = FutexResult::VALUE_CHANGED;
+  }
+  futexLock.unlock();
+
+  char const* resultStr = "?";
+  switch (result) {
+    case FutexResult::AWOKEN:
+      resultStr = "AWOKEN";
+      break;
+    case FutexResult::TIMEDOUT:
+      resultStr = "TIMEDOUT";
+      break;
+    case FutexResult::INTERRUPTED:
+      resultStr = "INTERRUPTED";
+      break;
+    case FutexResult::VALUE_CHANGED:
+      resultStr = "VALUE_CHANGED";
+      break;
+  }
+  FOLLY_TEST_DSCHED_VLOG(
+      "futexWait(" << futex << ", " << std::hex << expected << ", .., "
+                   << std::hex << waitMask << ") -> " << resultStr);
+  DeterministicSchedule::afterSharedAccess();
+  return result;
+}
+
 /**
  * Implementations of the atomic_wait API for DeterministicAtomic, these are
  * no-ops here.  Which for a correct implementation should not make a
@@ -494,8 +745,11 @@ void atomic_notify_all(const DeterministicAtomic<Integer>*) {}
  * cooperates with DeterministicSchedule.
  */
 struct DeterministicMutex {
+  using Sem = DeterministicSchedule::Sem;
+
   std::mutex m;
-  std::queue<sem_t*> waiters_;
+  std::queue<Sem*> waiters_;
+  ThreadSyncVar syncVar_;
 
   DeterministicMutex() = default;
   ~DeterministicMutex() = default;
@@ -506,7 +760,7 @@ struct DeterministicMutex {
     FOLLY_TEST_DSCHED_VLOG(this << ".lock()");
     DeterministicSchedule::beforeSharedAccess();
     while (!m.try_lock()) {
-      sem_t* sem = DeterministicSchedule::descheduleCurrentThread();
+      Sem* sem = DeterministicSchedule::descheduleCurrentThread();
       if (sem) {
         waiters_.push(sem);
       }
@@ -514,12 +768,18 @@ struct DeterministicMutex {
       // Wait to be scheduled by unlock
       DeterministicSchedule::beforeSharedAccess();
     }
+    if (DeterministicSchedule::isActive()) {
+      syncVar_.acquire();
+    }
     DeterministicSchedule::afterSharedAccess();
   }
 
   bool try_lock() {
     DeterministicSchedule::beforeSharedAccess();
     bool rv = m.try_lock();
+    if (rv && DeterministicSchedule::isActive()) {
+      syncVar_.acquire();
+    }
     FOLLY_TEST_DSCHED_VLOG(this << ".try_lock() -> " << rv);
     DeterministicSchedule::afterSharedAccess();
     return rv;
@@ -527,10 +787,13 @@ struct DeterministicMutex {
 
   void unlock() {
     FOLLY_TEST_DSCHED_VLOG(this << ".unlock()");
-    m.unlock();
     DeterministicSchedule::beforeSharedAccess();
+    m.unlock();
+    if (DeterministicSchedule::isActive()) {
+      syncVar_.release();
+    }
     if (!waiters_.empty()) {
-      sem_t* sem = waiters_.front();
+      Sem* sem = waiters_.front();
       DeterministicSchedule::reschedule(sem);
       waiters_.pop();
     }

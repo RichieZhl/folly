@@ -1,12 +1,11 @@
-#pragma once
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,11 +14,15 @@
  * limitations under the License.
  */
 
+#pragma once
+
 #if __cpp_lib_optional >= 201606
 #include <optional> // @manual
 #endif
 #include <type_traits>
+#include <utility>
 
+namespace folly {
 namespace pushmi {
 namespace detail {
 #if __cpp_lib_optional >= 201606
@@ -137,3 +140,4 @@ struct opt {
 
 } // namespace detail
 } // namespace pushmi
+} // namespace folly

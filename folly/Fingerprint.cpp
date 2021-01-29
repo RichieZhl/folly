@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,6 +19,8 @@
 #include <folly/Portability.h>
 #include <folly/Utility.h>
 #include <folly/detail/FingerprintPolynomial.h>
+
+#include <utility>
 
 namespace folly {
 namespace detail {
@@ -52,38 +54,42 @@ struct FingerprintTablePoly<127> {
 };
 
 template <typename D, size_t S0, size_t... I0>
-constexpr auto copy_table(D const (&table)[S0], index_sequence<I0...>) {
+constexpr auto copy_table(D const (&table)[S0], std::index_sequence<I0...>) {
   using array = std::array<D, S0>;
   return array{{table[I0]...}};
 }
 template <typename D, size_t S0>
 constexpr auto copy_table(D const (&table)[S0]) {
-  return copy_table(table, make_index_sequence<S0>{});
+  return copy_table(table, std::make_index_sequence<S0>{});
 }
 
 template <typename D, size_t S0, size_t S1, size_t... I0>
-constexpr auto copy_table(D const (&table)[S0][S1], index_sequence<I0...>) {
+constexpr auto copy_table(
+    D const (&table)[S0][S1],
+    std::index_sequence<I0...>) {
   using array = std::array<std::array<D, S1>, S0>;
   return array{{copy_table(table[I0])...}};
 }
 template <typename D, size_t S0, size_t S1>
 constexpr auto copy_table(D const (&table)[S0][S1]) {
-  return copy_table(table, make_index_sequence<S0>{});
+  return copy_table(table, std::make_index_sequence<S0>{});
 }
 
 template <typename D, size_t S0, size_t S1, size_t S2, size_t... I0>
-constexpr auto copy_table(D const (&table)[S0][S1][S2], index_sequence<I0...>) {
+constexpr auto copy_table(
+    D const (&table)[S0][S1][S2],
+    std::index_sequence<I0...>) {
   using array = std::array<std::array<std::array<D, S2>, S1>, S0>;
   return array{{copy_table(table[I0])...}};
 }
 template <typename D, size_t S0, size_t S1, size_t S2>
 constexpr auto copy_table(D const (&table)[S0][S1][S2]) {
-  return copy_table(table, make_index_sequence<S0>{});
+  return copy_table(table, std::make_index_sequence<S0>{});
 }
 
 template <size_t Deg>
 constexpr poly_table<Deg> make_poly_table() {
-  FingerprintPolynomial<Deg> const poly(FingerprintTablePoly<Deg>::data);
+  FingerprintPolynomial<Deg> poly(FingerprintTablePoly<Deg>::data);
   uint64_t table[8][256][poly_size(Deg)] = {};
   // table[i][q] is Q(X) * X^(k+8*i) mod P(X),
   // where k is the number of bits in the fingerprint (and deg(P)) and
@@ -92,10 +98,10 @@ constexpr poly_table<Deg> make_poly_table() {
   for (uint16_t x = 0; x < 256; x++) {
     FingerprintPolynomial<Deg> t;
     t.setHigh8Bits(uint8_t(x));
-    for (int i = 0; i < 8; i++) {
+    for (auto& entry : table) {
       t.mulXkmod(8, poly);
       for (size_t j = 0; j < poly_size(Deg); ++j) {
-        table[i][x][j] = t.get(j);
+        entry[x][j] = t.get(j);
       }
     }
   }

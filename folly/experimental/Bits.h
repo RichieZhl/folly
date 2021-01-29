@@ -1,11 +1,11 @@
 /*
- * Copyright 2012-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -210,12 +210,6 @@ struct Bits {
   }
 };
 
-// gcc 4.8 needs more -Wmaybe-uninitialized tickling, as it propagates the
-// taint upstream from loadRMW
-FOLLY_PUSH_WARNING
-FOLLY_GNU_DISABLE_WARNING("-Wuninitialized")
-FOLLY_GCC_DISABLE_WARNING("-Wmaybe-uninitialized")
-
 template <class T, class Traits>
 inline void Bits<T, Traits>::set(T* p, size_t bit) {
   T& block = p[blockIndex(bit)];
@@ -273,8 +267,6 @@ inline void Bits<T, Traits>::innerSet(
   v |= (value << offset);
   Traits::store(*p, v);
 }
-
-FOLLY_POP_WARNING
 
 template <class T, class Traits>
 inline bool Bits<T, Traits>::test(const T* p, size_t bit) {

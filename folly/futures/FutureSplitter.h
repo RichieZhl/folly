@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -51,8 +51,7 @@ class FutureSplitter {
    */
   explicit FutureSplitter(Future<T>&& future)
       : promise_(std::make_shared<SharedPromise<T>>()),
-        e_(getExecutorFrom(future)),
-        priority_(future.getPriority()) {
+        e_(getExecutorFrom(future)) {
     std::move(future).thenTry([promise = promise_](Try<T>&& theTry) {
       promise->setTry(std::move(theTry));
     });
@@ -65,7 +64,7 @@ class FutureSplitter {
     if (promise_ == nullptr) {
       throw_exception<FutureSplitterInvalid>();
     }
-    return promise_->getSemiFuture().via(e_, priority_);
+    return promise_->getSemiFuture().via(e_);
   }
 
   /**
@@ -80,8 +79,7 @@ class FutureSplitter {
 
  private:
   std::shared_ptr<SharedPromise<T>> promise_;
-  Executor* e_ = nullptr;
-  int8_t priority_{-1};
+  Executor::KeepAlive<> e_;
 
   static Executor* getExecutorFrom(Future<T>& f) {
     // If the passed future had a null executor, use an inline executor

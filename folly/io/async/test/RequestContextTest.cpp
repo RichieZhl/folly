@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,32 +19,13 @@
 #include <folly/Memory.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/io/async/Request.h>
+#include <folly/io/async/test/RequestContextHelper.h>
 #include <folly/portability/GTest.h>
+#include <folly/system/ThreadName.h>
 
 using namespace folly;
 
 RequestToken testtoken("test");
-
-class TestData : public RequestData {
- public:
-  explicit TestData(int data) : data_(data) {}
-  ~TestData() override {}
-
-  bool hasCallback() override {
-    return true;
-  }
-
-  void onSet() override {
-    set_++;
-  }
-
-  void onUnset() override {
-    unset_++;
-  }
-
-  int set_ = 0, unset_ = 0;
-  int data_;
-};
 
 class RequestContextTest : public ::testing::Test {
  protected:
@@ -90,6 +71,16 @@ class RequestContextTest : public ::testing::Test {
   void clearData(std::string key = "test") {
     getContext().clearContextData(key);
   }
+
+  std::vector<intptr_t> getRootIdsFromAllThreads() {
+    auto rootids = RequestContext::getRootIdsFromAllThreads();
+    std::vector<intptr_t> result;
+    std::transform(
+        rootids.begin(), rootids.end(), std::back_inserter(result), [](auto e) {
+          return e.id;
+        });
+    return result;
+  }
 };
 
 TEST_F(RequestContextTest, SimpleTest) {
@@ -102,8 +93,13 @@ TEST_F(RequestContextTest, SimpleTest) {
   EXPECT_EQ(RequestContext::saveContext(), nullptr);
   RequestContext::create();
   EXPECT_NE(RequestContext::saveContext(), nullptr);
+  auto rootids = getRootIdsFromAllThreads();
+  EXPECT_EQ(1, rootids.size());
+  EXPECT_EQ(RequestContext::get()->getRootId(), rootids[0]);
+  EXPECT_EQ(reinterpret_cast<intptr_t>(RequestContext::get()), rootids[0]);
   RequestContext::create();
   EXPECT_NE(RequestContext::saveContext(), nullptr);
+  EXPECT_NE(RequestContext::get()->getRootId(), rootids[0]);
 
   EXPECT_EQ(nullptr, RequestContext::get()->getContextData("test"));
 
@@ -114,6 +110,10 @@ TEST_F(RequestContextTest, SimpleTest) {
                     RequestContext::get()->getContextData(testtoken))
                     ->data_;
     EXPECT_EQ(10, data);
+    rootids = getRootIdsFromAllThreads();
+    EXPECT_EQ(2, rootids.size());
+    EXPECT_EQ(RequestContext::get()->getRootId(), rootids[0]);
+    EXPECT_EQ(RequestContext::get()->getRootId(), rootids[1]);
     base.terminateLoopSoon();
   });
   auto th = std::thread([&]() { base.loopForever(); });
@@ -256,14 +256,23 @@ TEST_F(RequestContextTest, sharedGlobalTest) {
     }
   };
 
-  RequestContextScopeGuard g0;
-  RequestContext::get()->setContextData(
-      "test", std::make_unique<GlobalTestData>());
+  intptr_t root = 0;
   {
-    RequestContextScopeGuard g1;
+    RequestContextScopeGuard g0;
     RequestContext::get()->setContextData(
         "test", std::make_unique<GlobalTestData>());
+    auto root0 = RequestContext::saveContext().get()->getRootId();
+    EXPECT_EQ(getRootIdsFromAllThreads()[0], root0);
+    {
+      RequestContextScopeGuard g1;
+      RequestContext::get()->setContextData(
+          "test", std::make_unique<GlobalTestData>());
+      auto root1 = RequestContext::saveContext().get()->getRootId();
+      EXPECT_EQ(getRootIdsFromAllThreads()[0], root1);
+    }
+    EXPECT_EQ(getRootIdsFromAllThreads()[0], root0);
   }
+  EXPECT_EQ(getRootIdsFromAllThreads()[0], root);
 }
 
 TEST_F(RequestContextTest, ShallowCopyBasic) {
@@ -271,34 +280,49 @@ TEST_F(RequestContextTest, ShallowCopyBasic) {
   setData(123, "immutable");
   EXPECT_EQ(123, getData("immutable").data_);
   EXPECT_FALSE(hasData());
+  EXPECT_EQ(0, getRootIdsFromAllThreads()[0]);
 
   {
     ShallowCopyRequestContextScopeGuard g1;
     EXPECT_EQ(123, getData("immutable").data_);
     setData(789);
     EXPECT_EQ(789, getData().data_);
+    EXPECT_EQ(0, getRootIdsFromAllThreads()[0]);
   }
 
   EXPECT_FALSE(hasData());
   EXPECT_EQ(123, getData("immutable").data_);
   EXPECT_EQ(1, getData("immutable").set_);
   EXPECT_EQ(0, getData("immutable").unset_);
+  EXPECT_EQ(0, getRootIdsFromAllThreads()[0]);
 }
 
 TEST_F(RequestContextTest, ShallowCopyOverwrite) {
   RequestContextScopeGuard g0;
   setData(123);
   EXPECT_EQ(123, getData().data_);
+  auto rootid = RequestContext::get()->getRootId();
+  EXPECT_EQ(rootid, getRootIdsFromAllThreads()[0]);
   {
     ShallowCopyRequestContextScopeGuard g1(
         "test", std::make_unique<TestData>(789));
     EXPECT_EQ(789, getData().data_);
     EXPECT_EQ(1, getData().set_);
     EXPECT_EQ(0, getData().unset_);
+    // should have inherited parent's rootid
+    EXPECT_EQ(rootid, getRootIdsFromAllThreads()[0]);
+
+    {
+      // rootId is preserved for shallow copies of shallow copies
+      ShallowCopyRequestContextScopeGuard g2;
+      EXPECT_EQ(rootid, getRootIdsFromAllThreads()[0]);
+    }
+    EXPECT_EQ(rootid, getRootIdsFromAllThreads()[0]);
   }
   EXPECT_EQ(123, getData().data_);
   EXPECT_EQ(2, getData().set_);
   EXPECT_EQ(1, getData().unset_);
+  EXPECT_EQ(rootid, getRootIdsFromAllThreads()[0]);
 }
 
 TEST_F(RequestContextTest, ShallowCopyDefaultContext) {
@@ -329,4 +353,46 @@ TEST_F(RequestContextTest, ShallowCopyClear) {
   EXPECT_EQ(123, getData().data_);
   EXPECT_EQ(2, getData().set_);
   EXPECT_EQ(1, getData().unset_);
+}
+
+TEST_F(RequestContextTest, RootIdOnCopy) {
+  auto ctxBase = std::make_shared<RequestContext>();
+  EXPECT_EQ(reinterpret_cast<intptr_t>(ctxBase.get()), ctxBase->getRootId());
+  {
+    auto ctx = RequestContext::copyAsRoot(*ctxBase);
+    EXPECT_EQ(reinterpret_cast<intptr_t>(ctx.get()), ctx->getRootId());
+  }
+  {
+    auto ctx = RequestContext::copyAsChild(*ctxBase);
+    EXPECT_EQ(reinterpret_cast<intptr_t>(ctxBase.get()), ctx->getRootId());
+  }
+}
+
+TEST_F(RequestContextTest, ThreadId) {
+  folly::setThreadName("DummyThread");
+  RequestContextScopeGuard g;
+  auto ctxBase = std::make_shared<RequestContext>();
+  auto rootids = RequestContext::getRootIdsFromAllThreads();
+  EXPECT_EQ(*folly::getThreadName(rootids[0].tid), "DummyThread");
+  EXPECT_EQ(rootids[0].tidOS, folly::getOSThreadID());
+
+  EventBase base;
+  base.runInEventBaseThread([&]() {
+    RequestContextScopeGuard g;
+    folly::setThreadName("DummyThread2");
+    rootids = RequestContext::getRootIdsFromAllThreads();
+    base.terminateLoopSoon();
+  });
+
+  auto th = std::thread([&]() { base.loopForever(); });
+  th.join();
+
+  std::sort(rootids.begin(), rootids.end(), [](const auto& a, const auto& b) {
+    auto aname = folly::getThreadName(a.tid);
+    auto bname = folly::getThreadName(b.tid);
+    return (aname ? *aname : "zzz") < (bname ? *bname : "zzz");
+  });
+
+  EXPECT_EQ(*folly::getThreadName(rootids[0].tid), "DummyThread");
+  EXPECT_FALSE(folly::getThreadName(rootids[1].tid));
 }

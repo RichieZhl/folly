@@ -1,11 +1,11 @@
 /*
- * Copyright 2012-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -469,12 +469,13 @@ class BucketedTimeSeries {
   TimePoint getEarliestTimeNonEmpty() const;
   size_t updateBuckets(TimePoint now);
 
-  ValueType rangeAdjust(
+  template <typename ReturnType>
+  ReturnType rangeAdjust(
       TimePoint bucketStart,
       TimePoint nextBucketStart,
       TimePoint start,
       TimePoint end,
-      ValueType input) const;
+      ReturnType input) const;
 
   template <typename Function>
   void forEachBucket(TimePoint start, TimePoint end, Function fn) const;
@@ -488,3 +489,5 @@ class BucketedTimeSeries {
 };
 
 } // namespace folly
+
+#include <folly/stats/BucketedTimeSeries-inl.h>

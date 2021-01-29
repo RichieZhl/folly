@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/experimental/JSONSchema.h>
 
 #include <boost/algorithm/string/replace.hpp>
@@ -25,6 +26,7 @@
 #include <folly/Singleton.h>
 #include <folly/String.h>
 #include <folly/json.h>
+#include <folly/portability/Math.h>
 
 namespace folly {
 namespace jsonschema {
@@ -141,7 +143,7 @@ struct MultipleOfValidator final : IValidator {
       return none;
     }
     if (schema_.isDouble() || value.isDouble()) {
-      const auto rem = std::remainder(value.asDouble(), schema_.asDouble());
+      const auto rem = folly::remainder(value.asDouble(), schema_.asDouble());
       if (std::abs(rem) > std::numeric_limits<double>::epsilon()) {
         return makeError("a multiple of ", schema_, value);
       }
@@ -1031,7 +1033,7 @@ std::unique_ptr<Validator> makeValidator(const dynamic& schema) {
   SchemaValidatorContext context(schema);
   context.refs["#"] = v.get();
   v->loadSchema(context, schema);
-  return std::move(v);
+  return v;
 }
 
 std::shared_ptr<Validator> makeSchemaValidator() {

@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,8 +18,6 @@
 
 #include <cstddef>
 
-#include <boost/noncopyable.hpp>
-
 #include <folly/Range.h>
 
 namespace folly {
@@ -28,13 +26,16 @@ namespace symbolizer {
 /**
  * Async-signal-safe line reader.
  */
-class LineReader : private boost::noncopyable {
+class LineReader {
  public:
   /**
    * Create a line reader that reads into a user-provided buffer (of size
    * bufSize).
    */
   LineReader(int fd, char* buf, size_t bufSize);
+
+  LineReader(const LineReader&) = delete;
+  LineReader& operator=(const LineReader&) = delete;
 
   enum State {
     kReading,

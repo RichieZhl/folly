@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/experimental/settings/Settings.h>
 #include <folly/Format.h>
 #include <folly/portability/GTest.h>
@@ -284,13 +285,21 @@ TEST(Settings, snapshot) {
     EXPECT_EQ(*some_ns::FOLLY_SETTING(follytest, some_flag), "global_value");
     EXPECT_EQ(
         *snapshot(some_ns::FOLLY_SETTING(follytest, some_flag)), "default");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot),
+        "default");
 
     // Set the value in the snapshot only
     snapshot(some_ns::FOLLY_SETTING(follytest, some_flag))
         .set("snapshot_value");
     EXPECT_EQ(*some_ns::FOLLY_SETTING(follytest, some_flag), "global_value");
     EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(), "global_value");
+    EXPECT_EQ(
         *snapshot(some_ns::FOLLY_SETTING(follytest, some_flag)),
+        "snapshot_value");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot),
         "snapshot_value");
   }
   // Discard the snapshot
@@ -305,11 +314,17 @@ TEST(Settings, snapshot) {
     EXPECT_EQ(
         *snapshot(some_ns::FOLLY_SETTING(follytest, some_flag)),
         "global_value");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot),
+        "global_value");
     snapshot(some_ns::FOLLY_SETTING(follytest, some_flag))
         .set("snapshot_value2");
     EXPECT_EQ(*some_ns::FOLLY_SETTING(follytest, some_flag), "global_value");
     EXPECT_EQ(
         *snapshot(some_ns::FOLLY_SETTING(follytest, some_flag)),
+        "snapshot_value2");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot),
         "snapshot_value2");
 
     // Set the global value, snapshot doesn't see it
@@ -317,6 +332,9 @@ TEST(Settings, snapshot) {
     EXPECT_EQ(*some_ns::FOLLY_SETTING(follytest, some_flag), "global_value2");
     EXPECT_EQ(
         *snapshot(some_ns::FOLLY_SETTING(follytest, some_flag)),
+        "snapshot_value2");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot),
         "snapshot_value2");
     snapshot.publish();
   }
@@ -331,46 +349,101 @@ TEST(Settings, snapshot) {
     folly::settings::Snapshot snapshot_1;
 
     EXPECT_EQ(*some_ns::FOLLY_SETTING(follytest, some_flag), "a");
+    EXPECT_EQ(some_ns::FOLLY_SETTING(follytest, some_flag).value(), "a");
     EXPECT_EQ(*snapshot_1(some_ns::FOLLY_SETTING(follytest, some_flag)), "a");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot_1), "a");
+
     EXPECT_EQ(*a_ns::FOLLY_SETTING(follytest, public_flag_to_a), 123);
+    EXPECT_EQ(a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(), 123);
     EXPECT_EQ(
         *snapshot_1(a_ns::FOLLY_SETTING(follytest, public_flag_to_a)), 123);
+    EXPECT_EQ(
+        a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(snapshot_1),
+        123);
 
     some_ns::FOLLY_SETTING(follytest, some_flag).set("b");
     EXPECT_EQ(*some_ns::FOLLY_SETTING(follytest, some_flag), "b");
+    EXPECT_EQ(some_ns::FOLLY_SETTING(follytest, some_flag).value(), "b");
     EXPECT_EQ(*snapshot_1(some_ns::FOLLY_SETTING(follytest, some_flag)), "a");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot_1), "a");
+
     EXPECT_EQ(*a_ns::FOLLY_SETTING(follytest, public_flag_to_a), 123);
+    EXPECT_EQ(a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(), 123);
     EXPECT_EQ(
         *snapshot_1(a_ns::FOLLY_SETTING(follytest, public_flag_to_a)), 123);
+    EXPECT_EQ(
+        a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(snapshot_1),
+        123);
 
     folly::settings::Snapshot snapshot_2;
     EXPECT_EQ(*some_ns::FOLLY_SETTING(follytest, some_flag), "b");
+    EXPECT_EQ(some_ns::FOLLY_SETTING(follytest, some_flag).value(), "b");
     EXPECT_EQ(*snapshot_1(some_ns::FOLLY_SETTING(follytest, some_flag)), "a");
     EXPECT_EQ(*snapshot_2(some_ns::FOLLY_SETTING(follytest, some_flag)), "b");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot_1), "a");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot_2), "b");
+
     EXPECT_EQ(*a_ns::FOLLY_SETTING(follytest, public_flag_to_a), 123);
+    EXPECT_EQ(a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(), 123);
     EXPECT_EQ(
         *snapshot_1(a_ns::FOLLY_SETTING(follytest, public_flag_to_a)), 123);
     EXPECT_EQ(
         *snapshot_2(a_ns::FOLLY_SETTING(follytest, public_flag_to_a)), 123);
+    EXPECT_EQ(
+        a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(snapshot_1),
+        123);
+    EXPECT_EQ(
+        a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(snapshot_2),
+        123);
 
     some_ns::FOLLY_SETTING(follytest, some_flag).set("c");
     EXPECT_EQ(*some_ns::FOLLY_SETTING(follytest, some_flag), "c");
+    EXPECT_EQ(some_ns::FOLLY_SETTING(follytest, some_flag).value(), "c");
     EXPECT_EQ(*snapshot_1(some_ns::FOLLY_SETTING(follytest, some_flag)), "a");
     EXPECT_EQ(*snapshot_2(some_ns::FOLLY_SETTING(follytest, some_flag)), "b");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot_1), "a");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot_2), "b");
+
     EXPECT_EQ(*a_ns::FOLLY_SETTING(follytest, public_flag_to_a), 123);
+    EXPECT_EQ(a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(), 123);
     EXPECT_EQ(
         *snapshot_1(a_ns::FOLLY_SETTING(follytest, public_flag_to_a)), 123);
     EXPECT_EQ(
         *snapshot_2(a_ns::FOLLY_SETTING(follytest, public_flag_to_a)), 123);
+    EXPECT_EQ(
+        a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(snapshot_1),
+        123);
+    EXPECT_EQ(
+        a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(snapshot_2),
+        123);
 
     a_ns::FOLLY_SETTING(follytest, public_flag_to_a).set(456);
     EXPECT_EQ(*some_ns::FOLLY_SETTING(follytest, some_flag), "c");
+    EXPECT_EQ(some_ns::FOLLY_SETTING(follytest, some_flag).value(), "c");
     EXPECT_EQ(*snapshot_1(some_ns::FOLLY_SETTING(follytest, some_flag)), "a");
     EXPECT_EQ(*snapshot_2(some_ns::FOLLY_SETTING(follytest, some_flag)), "b");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot_1), "a");
+    EXPECT_EQ(
+        some_ns::FOLLY_SETTING(follytest, some_flag).value(snapshot_2), "b");
+
     EXPECT_EQ(*a_ns::FOLLY_SETTING(follytest, public_flag_to_a), 456);
+    EXPECT_EQ(a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(), 456);
     EXPECT_EQ(
         *snapshot_1(a_ns::FOLLY_SETTING(follytest, public_flag_to_a)), 123);
     EXPECT_EQ(
         *snapshot_2(a_ns::FOLLY_SETTING(follytest, public_flag_to_a)), 123);
+    EXPECT_EQ(
+        a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(snapshot_1),
+        123);
+    EXPECT_EQ(
+        a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(snapshot_2),
+        123);
   }
 }

@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,10 +25,10 @@ using folly::symbolizer::ElfFile;
 // signatures here to prevent name mangling
 uint64_t kIntegerValue = 1234567890UL;
 const char* kStringValue = "coconuts";
-
+const char* const kDefaultElf = "/proc/self/exe";
 class ElfTest : public ::testing::Test {
  protected:
-  ElfFile elfFile_{"/proc/self/exe"};
+  ElfFile elfFile_{kDefaultElf};
 };
 
 TEST_F(ElfTest, IntegerValue) {
@@ -58,10 +58,9 @@ TEST_F(ElfTest, TinyNonElfFile) {
   folly::writeFull(tmpFile.fd(), contents.data(), contents.size());
 
   ElfFile elfFile;
-  const char* msg = nullptr;
-  auto res = elfFile.openNoThrow(tmpFile.path().c_str(), true, &msg);
-  EXPECT_EQ(ElfFile::kInvalidElfFile, res);
-  EXPECT_STREQ("not an ELF file (too short)", msg);
+  auto res = elfFile.openNoThrow(tmpFile.path().c_str());
+  EXPECT_EQ(ElfFile::kInvalidElfFile, res.code);
+  EXPECT_STREQ("not an ELF file (too short)", res.msg);
 }
 
 TEST_F(ElfTest, NonElfScript) {
@@ -71,8 +70,21 @@ TEST_F(ElfTest, NonElfScript) {
   folly::writeFull(tmpFile.fd(), contents.data(), contents.size());
 
   ElfFile elfFile;
-  const char* msg = nullptr;
-  auto res = elfFile.openNoThrow(tmpFile.path().c_str(), true, &msg);
-  EXPECT_EQ(ElfFile::kInvalidElfFile, res);
-  EXPECT_STREQ("invalid ELF magic", msg);
+  auto res = elfFile.openNoThrow(tmpFile.path().c_str());
+  EXPECT_EQ(ElfFile::kInvalidElfFile, res.code);
+  EXPECT_STREQ("invalid ELF magic", res.msg);
+}
+
+TEST_F(ElfTest, FailToOpenLargeFilename) {
+  // ElfFile used to segfault if it failed to open large filenames
+  folly::test::TemporaryDirectory tmpDir;
+  auto elfFile = std::make_unique<ElfFile>(); // on the heap so asan can see it
+  auto const largeNonExistingName = (tmpDir.path() / std::string(1000, 'x'));
+  ASSERT_EQ(
+      ElfFile::kSystemError,
+      elfFile->openNoThrow(largeNonExistingName.c_str()));
+  ASSERT_EQ(
+      ElfFile::kSystemError,
+      elfFile->openNoThrow(largeNonExistingName.c_str()));
+  EXPECT_EQ(ElfFile::kSuccess, elfFile->openNoThrow(kDefaultElf));
 }

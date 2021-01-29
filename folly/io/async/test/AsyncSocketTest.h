@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,10 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <folly/io/async/AsyncSocket.h>
 #include <folly/io/async/test/BlockingSocket.h>
+#include <folly/net/NetOps.h>
+#include <folly/net/NetworkSocket.h>
 #include <folly/portability/Sockets.h>
 
 #include <memory>
@@ -94,10 +97,8 @@ class ReadCallback : public folly::AsyncTransportWrapper::ReadCallback {
         maxBufferSz(_maxBufferSz) {}
 
   ~ReadCallback() override {
-    for (std::vector<Buffer>::iterator it = buffers.begin();
-         it != buffers.end();
-         ++it) {
-      it->free();
+    for (auto& buffer : buffers) {
+      buffer.free();
     }
     currentBuffer.free();
   }
@@ -181,13 +182,25 @@ class ReadCallback : public folly::AsyncTransportWrapper::ReadCallback {
 
 class BufferCallback : public folly::AsyncTransport::BufferCallback {
  public:
-  BufferCallback() : buffered_(false), bufferCleared_(false) {}
+  BufferCallback(folly::AsyncSocket* socket, size_t expectedBytes)
+      : socket_(socket),
+        expectedBytes_(expectedBytes),
+        buffered_(false),
+        bufferCleared_(false) {}
 
   void onEgressBuffered() override {
+    size_t bytesWritten = socket_->getAppBytesWritten();
+    size_t bytesBuffered = socket_->getAppBytesBuffered();
+    CHECK_GT(bytesBuffered, 0);
+    CHECK_EQ(expectedBytes_, bytesWritten + bytesBuffered);
     buffered_ = true;
   }
 
   void onEgressBufferCleared() override {
+    size_t bytesWritten = socket_->getAppBytesWritten();
+    size_t bytesBuffered = socket_->getAppBytesBuffered();
+    CHECK_EQ(0, bytesBuffered);
+    CHECK_EQ(expectedBytes_, bytesWritten);
     bufferCleared_ = true;
   }
 
@@ -200,6 +213,8 @@ class BufferCallback : public folly::AsyncTransport::BufferCallback {
   }
 
  private:
+  folly::AsyncSocket* socket_{nullptr};
+  size_t expectedBytes_{0};
   bool buffered_{false};
   bool bufferCleared_{false};
 };
@@ -268,16 +283,16 @@ class TestServer {
  public:
   // Create a TestServer.
   // This immediately starts listening on an ephemeral port.
-  explicit TestServer(bool enableTFO = false, int bufSize = -1) : fd_(-1) {
+  explicit TestServer(bool enableTFO = false, int bufSize = -1) : fd_() {
     namespace fsp = folly::portability::sockets;
-    fd_ = fsp::socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (fd_ < 0) {
+    fd_ = folly::netops::socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (fd_ == folly::NetworkSocket()) {
       throw folly::AsyncSocketException(
           folly::AsyncSocketException::INTERNAL_ERROR,
           "failed to create test server socket",
           errno);
     }
-    if (fcntl(fd_, F_SETFL, O_NONBLOCK) != 0) {
+    if (folly::netops::set_socket_non_blocking(fd_) != 0) {
       throw folly::AsyncSocketException(
           folly::AsyncSocketException::INTERNAL_ERROR,
           "failed to put test server socket in "
@@ -309,18 +324,20 @@ class TestServer {
     };
 
     if (bufSize > 0) {
-      setsockopt(fd_, SOL_SOCKET, SO_SNDBUF, &bufSize, sizeof(bufSize));
-      setsockopt(fd_, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
+      folly::netops::setsockopt(
+          fd_, SOL_SOCKET, SO_SNDBUF, &bufSize, sizeof(bufSize));
+      folly::netops::setsockopt(
+          fd_, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
     }
 
-    if (bind(fd_, res->ai_addr, res->ai_addrlen)) {
+    if (folly::netops::bind(fd_, res->ai_addr, res->ai_addrlen)) {
       throw folly::AsyncSocketException(
           folly::AsyncSocketException::INTERNAL_ERROR,
           "failed to bind to async server socket for port 10",
           errno);
     }
 
-    if (listen(fd_, 10) != 0) {
+    if (folly::netops::listen(fd_, 10) != 0) {
       throw folly::AsyncSocketException(
           folly::AsyncSocketException::INTERNAL_ERROR,
           "failed to listen on test server socket",
@@ -334,8 +351,8 @@ class TestServer {
   }
 
   ~TestServer() {
-    if (fd_ != -1) {
-      close(fd_);
+    if (fd_ != folly::NetworkSocket()) {
+      folly::netops::close(fd_);
     }
   }
 
@@ -344,12 +361,11 @@ class TestServer {
     return address_;
   }
 
-  int acceptFD(int timeout = 50) {
-    namespace fsp = folly::portability::sockets;
-    struct pollfd pfd;
+  folly::NetworkSocket acceptFD(int timeout = 50) {
+    folly::netops::PollDescriptor pfd;
     pfd.fd = fd_;
     pfd.events = POLLIN;
-    int ret = poll(&pfd, 1, timeout);
+    int ret = folly::netops::poll(&pfd, 1, timeout);
     if (ret == 0) {
       throw folly::AsyncSocketException(
           folly::AsyncSocketException::INTERNAL_ERROR,
@@ -361,8 +377,8 @@ class TestServer {
           errno);
     }
 
-    int acceptedFd = fsp::accept(fd_, nullptr, nullptr);
-    if (acceptedFd < 0) {
+    auto acceptedFd = folly::netops::accept(fd_, nullptr, nullptr);
+    if (acceptedFd == folly::NetworkSocket()) {
       throw folly::AsyncSocketException(
           folly::AsyncSocketException::INTERNAL_ERROR,
           "test server accept() failed",
@@ -373,14 +389,14 @@ class TestServer {
   }
 
   std::shared_ptr<BlockingSocket> accept(int timeout = 50) {
-    int fd = acceptFD(timeout);
+    auto fd = acceptFD(timeout);
     return std::make_shared<BlockingSocket>(fd);
   }
 
   std::shared_ptr<folly::AsyncSocket> acceptAsync(
       folly::EventBase* evb,
       int timeout = 50) {
-    int fd = acceptFD(timeout);
+    auto fd = acceptFD(timeout);
     return folly::AsyncSocket::newSocket(evb, fd);
   }
 
@@ -401,6 +417,6 @@ class TestServer {
   }
 
  private:
-  int fd_;
+  folly::NetworkSocket fd_;
   folly::SocketAddress address_;
 };

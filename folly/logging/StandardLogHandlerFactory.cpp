@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,12 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/logging/StandardLogHandlerFactory.h>
 
 #include <folly/MapUtil.h>
 #include <folly/String.h>
 #include <folly/logging/CustomLogFormatter.h>
 #include <folly/logging/GlogStyleFormatter.h>
+#include <folly/logging/LogLevel.h>
 #include <folly/logging/LogWriter.h>
 #include <folly/logging/StandardLogHandler.h>
 
@@ -105,7 +107,15 @@ std::shared_ptr<StandardLogHandler> StandardLogHandlerFactory::createHandler(
     throw std::invalid_argument(
         to<string>("unknown log formatter type \"", *formatterType, "\""));
   }
+  return createHandler(type, writerFactory, formatterFactory.get(), options);
+}
 
+std::shared_ptr<StandardLogHandler> StandardLogHandlerFactory::createHandler(
+    StringPiece type,
+    WriterFactory* writerFactory,
+    FormatterFactory* formatterFactory,
+    const Options& options) {
+  Optional<LogLevel> logLevel;
   Optional<LogLevel> syncLevel;
 
   // Process the log formatter and log handler options
@@ -127,8 +137,19 @@ std::shared_ptr<StandardLogHandler> StandardLogHandlerFactory::createHandler(
     // We explicitly processed the "formatter" option above.
     handled |= handled || (entry.first == "formatter");
 
-    // Process the "sync_level" option.
-    if (entry.first == "sync_level") {
+    if (entry.first == "level") {
+      try {
+        logLevel = stringToLogLevel(entry.second);
+      } catch (const std::exception& ex) {
+        errors.push_back(to<string>(
+            "unable to parse value for option \"",
+            entry.first,
+            "\": ",
+            ex.what()));
+      }
+      handled = true;
+    } else if (entry.first == "sync_level") {
+      // Process the "sync_level" option.
       try {
         syncLevel = stringToLogLevel(entry.second);
       } catch (const std::exception& ex) {
@@ -155,13 +176,21 @@ std::shared_ptr<StandardLogHandler> StandardLogHandlerFactory::createHandler(
   auto writer = writerFactory->createWriter();
   auto formatter = formatterFactory->createFormatter(writer);
 
+  std::shared_ptr<StandardLogHandler> logHandler;
+
   if (syncLevel) {
-    return std::make_shared<StandardLogHandler>(
+    logHandler = std::make_shared<StandardLogHandler>(
         LogHandlerConfig{type, options}, formatter, writer, *syncLevel);
   } else {
-    return std::make_shared<StandardLogHandler>(
+    logHandler = std::make_shared<StandardLogHandler>(
         LogHandlerConfig{type, options}, formatter, writer);
   }
+
+  if (logLevel) {
+    logHandler->setLevel(*logLevel);
+  }
+
+  return logHandler;
 }
 
 } // namespace folly

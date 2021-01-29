@@ -1,11 +1,11 @@
 /*
- * Copyright 2012-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -461,7 +461,7 @@ TEST(Format, BogusFormatString) {
 
   // This one fails in detail::enforceWhitespace(), which throws
   // std::range_error
-  EXPECT_THROW_STR(sformat("{0[test}"), std::range_error, "Non-whitespace");
+  EXPECT_FORMAT_ERROR(sformat("{0[test}"), "argument index must be integer");
 }
 
 template <bool containerMode, class... Args>

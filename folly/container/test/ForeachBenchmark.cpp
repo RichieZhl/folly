@@ -1,11 +1,11 @@
 /*
- * Copyright 2016-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,7 +24,6 @@
 #include <folly/init/Init.h>
 
 using namespace folly;
-using namespace folly::detail;
 
 // Benchmarks:
 // 1. Benchmark iterating through the man with FOR_EACH, and also assign
@@ -339,12 +338,6 @@ BENCHMARK(ForEachDescendingManual, iters) {
   for (size_t i = iters; i-- > 1;) {
     sum *= i;
   }
-  doNotOptimizeAway(sum);
-}
-
-BENCHMARK(ForEachRangeR, iters) {
-  int sum = 1;
-  FOR_EACH_RANGE_R (i, 1U, iters) { sum *= i; }
   doNotOptimizeAway(sum);
 }
 

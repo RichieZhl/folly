@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,12 +16,14 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <ostream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include <folly/CPortability.h>
@@ -221,6 +223,7 @@ class HistogramBuckets {
   }
 
  private:
+  static constexpr bool kIsExact = std::numeric_limits<ValueType>::is_exact;
   ValueType bucketSize_;
   ValueType min_;
   ValueType max_;
@@ -472,15 +475,13 @@ class Histogram {
   };
 
  private:
-  template <
-      typename S,
-      typename = _t<std::enable_if<std::is_integral<S>::value>>>
-  static constexpr _t<std::make_unsigned<S>> to_unsigned(S s) {
-    return static_cast<_t<std::make_unsigned<S>>>(s);
+  template <typename S, typename = std::enable_if_t<std::is_integral<S>::value>>
+  static constexpr std::make_unsigned_t<S> to_unsigned(S s) {
+    return static_cast<std::make_unsigned_t<S>>(s);
   }
   template <
       typename S,
-      typename = _t<std::enable_if<!std::is_integral<S>::value>>>
+      typename = std::enable_if_t<!std::is_integral<S>::value>>
   static constexpr S to_unsigned(S s) {
     return s;
   }
@@ -490,18 +491,4 @@ class Histogram {
 
 } // namespace folly
 
-// MSVC 2017 Update 3/4 has an issue with explicitly instantiating templated
-// functions with default arguments inside templated classes when compiled
-// with /permissive- (the default for the CMake build), so we directly include
-// the -defs as if it were -inl, and don't provide the explicit instantiations.
-// https://developercommunity.visualstudio.com/content/problem/81223/incorrect-error-c5037-with-permissive.html
-#if defined(_MSC_VER) && _MSC_FULL_VER >= 191125506 && \
-    _MSC_FULL_VER <= 191125547
-#define FOLLY_MSVC_USE_WORKAROUND_FOR_C5037 1
-#else
-#define FOLLY_MSVC_USE_WORKAROUND_FOR_C5037 0
-#endif
-
-#if FOLLY_MSVC_USE_WORKAROUND_FOR_C5037
-#include <folly/stats/Histogram-defs.h>
-#endif
+#include <folly/stats/Histogram-inl.h>

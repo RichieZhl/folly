@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,11 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/experimental/symbolizer/StackTrace.h>
 
 // Must be first to ensure that UNW_LOCAL_ONLY is defined
 #define UNW_LOCAL_ONLY 1
 #include <libunwind.h>
+
+#ifdef __APPLE__
+#include <execinfo.h>
+#endif
 
 namespace folly {
 namespace symbolizer {
@@ -28,7 +33,11 @@ ssize_t getStackTrace(uintptr_t* addresses, size_t maxAddresses) {
   // The libunwind documentation says that unw_backtrace is async-signal-safe
   // but, as of libunwind 1.0.1, it isn't (tdep_trace allocates memory on
   // x86_64)
+#ifdef __APPLE__
+  int r = backtrace(reinterpret_cast<void**>(addresses), maxAddresses);
+#else
   int r = unw_backtrace(reinterpret_cast<void**>(addresses), maxAddresses);
+#endif
   return r < 0 ? -1 : r;
 }
 

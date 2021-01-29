@@ -1,11 +1,11 @@
 /*
- * Copyright 2012-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,9 +20,11 @@
 #include <folly/portability/GTest.h>
 
 #include <algorithm>
+#include <initializer_list>
 #include <iomanip>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
@@ -60,6 +62,18 @@ static_assert(sizeof(Optional<char>) == sizeof(boost::optional<char>), "");
 static_assert(sizeof(Optional<short>) == sizeof(boost::optional<short>), "");
 static_assert(sizeof(Optional<int>) == sizeof(boost::optional<int>), "");
 static_assert(sizeof(Optional<double>) == sizeof(boost::optional<double>), "");
+
+TEST(Optional, ConstexprConstructible) {
+  // Use FOLLY_STORAGE_CONSTEXPR to work around MSVC not taking this.
+  static FOLLY_STORAGE_CONSTEXPR Optional<int> opt;
+  // NOTE: writing `opt = none` instead of `opt(none)` causes gcc to reject this
+  // code, claiming that the (non-constexpr) move ctor of `Optional` is being
+  // invoked.
+  static FOLLY_STORAGE_CONSTEXPR Optional<int> opt2(none);
+
+  EXPECT_FALSE(opt.has_value());
+  EXPECT_FALSE(opt2.has_value());
+}
 
 TEST(Optional, NoDefault) {
   Optional<NoDefault> x;
@@ -571,6 +585,37 @@ TEST(Optional, Pointee) {
   EXPECT_FALSE(get_pointer(x));
 }
 
+namespace {
+class ConstructibleWithArgsOnly {
+ public:
+  explicit ConstructibleWithArgsOnly(int, double) {}
+
+  ConstructibleWithArgsOnly() = delete;
+  ConstructibleWithArgsOnly(const ConstructibleWithArgsOnly&) = delete;
+  ConstructibleWithArgsOnly(ConstructibleWithArgsOnly&&) = delete;
+  ConstructibleWithArgsOnly& operator=(const ConstructibleWithArgsOnly&) =
+      delete;
+  ConstructibleWithArgsOnly& operator=(ConstructibleWithArgsOnly&&) = delete;
+};
+
+class ConstructibleWithInitializerListAndArgsOnly {
+ public:
+  ConstructibleWithInitializerListAndArgsOnly(
+      std::initializer_list<int>,
+      double) {}
+
+  ConstructibleWithInitializerListAndArgsOnly() = delete;
+  ConstructibleWithInitializerListAndArgsOnly(
+      const ConstructibleWithInitializerListAndArgsOnly&) = delete;
+  ConstructibleWithInitializerListAndArgsOnly(
+      ConstructibleWithInitializerListAndArgsOnly&&) = delete;
+  ConstructibleWithInitializerListAndArgsOnly& operator=(
+      const ConstructibleWithInitializerListAndArgsOnly&) = delete;
+  ConstructibleWithInitializerListAndArgsOnly& operator=(
+      ConstructibleWithInitializerListAndArgsOnly&&) = delete;
+};
+} // namespace
+
 TEST(Optional, MakeOptional) {
   // const L-value version
   const std::string s("abc");
@@ -604,6 +649,34 @@ TEST(Optional, MakeOptional) {
   EXPECT_TRUE(pInt.get() == nullptr);
   ASSERT_TRUE(optIntPtr.hasValue());
   EXPECT_EQ(**optIntPtr, 3);
+
+  // variadic version
+  {
+    auto&& optional = make_optional<ConstructibleWithArgsOnly>(int{}, double{});
+    std::ignore = optional;
+  }
+  {
+    using Type = ConstructibleWithInitializerListAndArgsOnly;
+    auto&& optional = make_optional<Type>({int{}}, double{});
+    std::ignore = optional;
+  }
+}
+
+TEST(Optional, InitializerListConstruct) {
+  using Type = ConstructibleWithInitializerListAndArgsOnly;
+  auto&& optional = Optional<Type>{in_place, {int{}}, double{}};
+  std::ignore = optional;
+}
+
+TEST(Optional, TestDisambiguationMakeOptionalVariants) {
+  {
+    auto optional = make_optional<int>(1);
+    std::ignore = optional;
+  }
+  {
+    auto optional = make_optional(1);
+    std::ignore = optional;
+  }
 }
 
 TEST(Optional, SelfAssignment) {
@@ -642,8 +715,6 @@ class ContainsOptional {
 
 /**
  * Test that a class containing an Optional can be copy and move assigned.
- * This was broken under gcc 4.7 until assignment operators were explicitly
- * defined.
  */
 TEST(Optional, AssignmentContained) {
   {
@@ -736,6 +807,16 @@ TEST(Optional, ConstMember) {
   replaceWith2(o);
   sum += o->x;
   EXPECT_EQ(sum, 3);
+}
+
+TEST(Optional, NoneMatchesNullopt) {
+  auto op = make_optional<int>(10);
+  op = {};
+  EXPECT_FALSE(op.has_value());
+
+  op = make_optional<int>(20);
+  op = none;
+  EXPECT_FALSE(op.has_value());
 }
 
 } // namespace folly

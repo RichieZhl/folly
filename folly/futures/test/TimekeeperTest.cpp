@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <folly/DefaultKeepAliveExecutor.h>
 #include <folly/Singleton.h>
 #include <folly/executors/ManualExecutor.h>
 #include <folly/futures/Future.h>
@@ -41,6 +42,16 @@ struct TimekeeperFixture : public testing::Test {
 TEST_F(TimekeeperFixture, after) {
   auto t1 = now();
   auto f = timeLord_->after(awhile);
+  EXPECT_FALSE(f.isReady());
+  std::move(f).get();
+  auto t2 = now();
+
+  EXPECT_GE(t2 - t1, awhile);
+}
+
+TEST_F(TimekeeperFixture, afterUnsafe) {
+  auto t1 = now();
+  auto f = timeLord_->afterUnsafe(awhile);
   EXPECT_FALSE(f.isReady());
   std::move(f).get();
   auto t2 = now();
@@ -79,6 +90,15 @@ TEST(Timekeeper, futureSleep) {
   EXPECT_GE(now() - t1, one_ms);
 }
 
+FOLLY_PUSH_WARNING
+FOLLY_GNU_DISABLE_WARNING("-Wdeprecated-declarations")
+TEST(Timekeeper, futureSleepUnsafe) {
+  auto t1 = now();
+  futures::sleepUnsafe(one_ms).get();
+  EXPECT_GE(now() - t1, one_ms);
+}
+FOLLY_POP_WARNING
+
 TEST(Timekeeper, futureSleepHandlesNullTimekeeperSingleton) {
   Singleton<ThreadWheelTimekeeper>::make_mock([] { return nullptr; });
   SCOPE_EXIT {
@@ -107,6 +127,65 @@ TEST(Timekeeper, semiFutureWithinHandlesNullTimekeeperSingleton) {
   EXPECT_THROW(std::move(f).get(), FutureNoTimekeeper);
 }
 
+TEST(Timekeeper, semiFutureWithinCancelsTimeout) {
+  struct MockTimekeeper : Timekeeper {
+    MockTimekeeper() {
+      p_.setInterruptHandler([this](const exception_wrapper& ew) {
+        ew.handle([this](const FutureCancellation&) { cancelled_ = true; });
+        p_.setException(ew);
+      });
+    }
+
+    SemiFuture<Unit> after(Duration) override {
+      return p_.getSemiFuture();
+    }
+
+    Promise<Unit> p_;
+    bool cancelled_{false};
+  };
+
+  MockTimekeeper tk;
+
+  Promise<int> p;
+  auto f = p.getSemiFuture().within(too_long, static_cast<Timekeeper*>(&tk));
+  p.setValue(1);
+  f.wait();
+  EXPECT_TRUE(tk.cancelled_);
+}
+
+TEST(Timekeeper, semiFutureWithinInlineAfter) {
+  struct MockTimekeeper : Timekeeper {
+    SemiFuture<Unit> after(Duration) override {
+      return folly::makeSemiFuture<folly::Unit>(folly::FutureNoTimekeeper());
+    }
+  };
+
+  MockTimekeeper tk;
+
+  Promise<int> p;
+  auto f = p.getSemiFuture().within(too_long, static_cast<Timekeeper*>(&tk));
+  EXPECT_THROW(std::move(f).get(), folly::FutureNoTimekeeper);
+}
+
+TEST(Timekeeper, semiFutureWithinReady) {
+  struct MockTimekeeper : Timekeeper {
+    SemiFuture<Unit> after(Duration) override {
+      called_ = true;
+      return folly::makeSemiFuture<folly::Unit>(folly::FutureNoTimekeeper());
+    }
+
+    bool called_{false};
+  };
+
+  MockTimekeeper tk;
+
+  Promise<int> p;
+  p.setValue(1);
+  auto f = p.getSemiFuture().within(too_long, static_cast<Timekeeper*>(&tk));
+  f.wait();
+  EXPECT_FALSE(tk.called_);
+}
+
 TEST(Timekeeper, futureDelayed) {
   auto t1 = now();
   auto dur = makeFuture()
@@ -122,16 +201,6 @@ TEST(Timekeeper, semiFutureDelayed) {
   auto dur = makeSemiFuture()
                  .delayed(one_ms)
                  .toUnsafeFuture()
-                 .thenValue([=](auto&&) { return now() - t1; })
-                 .get();
-
-  EXPECT_GE(dur, one_ms);
-}
-
-TEST(Timekeeper, futureDelayedUnsafe) {
-  auto t1 = now();
-  auto dur = makeFuture()
-                 .delayedUnsafe(one_ms)
                  .thenValue([=](auto&&) { return now() - t1; })
                  .get();
 
@@ -199,30 +268,30 @@ TEST(Timekeeper, futureDelayedStickyExecutor) {
 
 TEST(Timekeeper, futureWithinThrows) {
   Promise<int> p;
-  auto f =
-      p.getFuture().within(one_ms).onError([](FutureTimeout&) { return -1; });
+  auto f = p.getFuture().within(one_ms).thenError(
+      tag_t<FutureTimeout>{}, [](auto&&) { return -1; });
 
   EXPECT_EQ(-1, std::move(f).get());
 }
 
 TEST(Timekeeper, semiFutureWithinThrows) {
   Promise<int> p;
-  auto f = p.getSemiFuture().within(one_ms).toUnsafeFuture().onError(
-      [](FutureTimeout&) { return -1; });
+  auto f = p.getSemiFuture().within(one_ms).toUnsafeFuture().thenError(
+      tag_t<FutureTimeout>{}, [](auto&&) { return -1; });
 
   EXPECT_EQ(-1, std::move(f).get());
 }
 
 TEST(Timekeeper, futureWithinAlreadyComplete) {
-  auto f =
-      makeFuture(42).within(one_ms).onError([&](FutureTimeout&) { return -1; });
+  auto f = makeFuture(42).within(one_ms).thenError(
+      tag_t<FutureTimeout>{}, [&](auto&&) { return -1; });
 
   EXPECT_EQ(42, std::move(f).get());
 }
 
 TEST(Timekeeper, semiFutureWithinAlreadyComplete) {
-  auto f = makeSemiFuture(42).within(one_ms).toUnsafeFuture().onError(
-      [&](FutureTimeout&) { return -1; });
+  auto f = makeSemiFuture(42).within(one_ms).toUnsafeFuture().thenError(
+      tag_t<FutureTimeout>{}, [&](auto&&) { return -1; });
 
   EXPECT_EQ(42, std::move(f).get());
 }
@@ -231,7 +300,7 @@ TEST(Timekeeper, futureWithinFinishesInTime) {
   Promise<int> p;
   auto f = p.getFuture()
                .within(std::chrono::minutes(1))
-               .onError([&](FutureTimeout&) { return -1; });
+               .thenError(tag_t<FutureTimeout>{}, [&](auto&&) { return -1; });
   p.setValue(42);
 
   EXPECT_EQ(42, std::move(f).get());
@@ -242,7 +311,7 @@ TEST(Timekeeper, semiFutureWithinFinishesInTime) {
   auto f = p.getSemiFuture()
                .within(std::chrono::minutes(1))
                .toUnsafeFuture()
-               .onError([&](FutureTimeout&) { return -1; });
+               .thenError(tag_t<FutureTimeout>{}, [&](auto&&) { return -1; });
   p.setValue(42);
 
   EXPECT_EQ(42, std::move(f).get());
@@ -324,8 +393,9 @@ TEST(Timekeeper, interruptDoesntCrash) {
 
 TEST(Timekeeper, chainedInterruptTest) {
   bool test = false;
-  auto f =
-      futures::sleep(milliseconds(100)).thenValue([&](auto&&) { test = true; });
+  auto f = futures::sleep(milliseconds(100)).deferValue([&](auto&&) {
+    test = true;
+  });
   f.cancel();
   f.wait();
   EXPECT_FALSE(test);
@@ -362,9 +432,12 @@ TEST(Timekeeper, semiFutureWithinChainedInterruptTest) {
 }
 
 TEST(Timekeeper, executor) {
-  class ExecutorTester : public Executor {
+  class ExecutorTester : public DefaultKeepAliveExecutor {
    public:
-    void add(Func f) override {
+    ~ExecutorTester() override {
+      joinKeepAlive();
+    }
+    virtual void add(Func f) override {
       count++;
       f();
     }
@@ -373,7 +446,10 @@ TEST(Timekeeper, executor) {
 
   Promise<Unit> p;
   ExecutorTester tester;
-  auto f = p.getFuture().via(&tester).within(one_ms).thenValue([&](auto&&) {});
+  auto f = p.getFuture()
+               .via(&tester)
+               .within(milliseconds(100))
+               .thenValue([&](auto&&) {});
   p.setValue();
   f.wait();
   EXPECT_EQ(2, tester.count);

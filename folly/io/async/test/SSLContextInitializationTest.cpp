@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/io/async/test/AsyncSSLSocketTest.h>
 #include <functional>
 
@@ -97,6 +98,29 @@ TEST(SSLContextInitializationTest, SSLContextLocksSetAfterInitIgnored) {
       ::testing::ExitedWithCode(0),
       "SSLContextLocksSetAfterInitIgnored passed");
 }
+
+TEST(SSLContextInitializationTest, SSLContext_SSL_CTX_constructor) {
+  folly::ssl::init();
+
+  SSL_CTX* ctx = SSL_CTX_new(TLS_method());
+  EXPECT_NE(ctx, nullptr) << "SSL_CTX* creation for test failed";
+
+  {
+    folly::SSLContext sslContext(ctx);
+    SSL_CTX_free(ctx);
+    // Shouldn't be fully freed because SSLContext should've added to the
+    // refcount. up_ref should succed
+    EXPECT_EQ(SSL_CTX_up_ref(ctx), 1)
+        << "Incrementing ctx refcount failed, SSLContext isn't grabbing a ref on creation";
+  }
+  // Last reference, ctx should no longer be valid
+  SSL_CTX_free(ctx);
+
+  // Should throw because ctx is no longer valid, and the constructor should
+  // fail on incrementing ctx refcount
+  EXPECT_THROW(folly::SSLContext sslContext(ctx), std::runtime_error);
+}
+
 } // namespace folly
 
 int main(int argc, char* argv[]) {

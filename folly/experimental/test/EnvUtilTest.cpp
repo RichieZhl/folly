@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,7 +19,9 @@
 #include <boost/algorithm/string.hpp>
 #include <folly/Memory.h>
 #include <folly/Subprocess.h>
+#include <folly/container/Array.h>
 #include <folly/portability/Fcntl.h>
+#include <folly/portability/GFlags.h>
 #include <folly/portability/GTest.h>
 #include <folly/portability/Stdlib.h>
 #include <glog/logging.h>
@@ -160,8 +162,9 @@ TEST(EnvironmentStateTest, forC) {
   (*env)["spork"] = "foon";
   EXPECT_STREQ("spork=foon", env.toPointerArray().get()[0]);
   EXPECT_EQ(nullptr, env.toPointerArray().get()[1]);
-  char const* program = fLS::FLAGS_env_util_subprocess_binary.c_str();
+  char* program = &fLS::FLAGS_env_util_subprocess_binary[0];
   pid_t pid;
+  auto argV = folly::make_array(program, nullptr);
   PCHECK(
       0 ==
       posix_spawn(
@@ -169,7 +172,7 @@ TEST(EnvironmentStateTest, forC) {
           program,
           nullptr,
           nullptr,
-          nullptr,
+          argV.data(),
           env.toPointerArray().get()));
   int result;
   PCHECK(pid == waitpid(pid, &result, 0));

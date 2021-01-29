@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,6 +29,76 @@ bool compareJson(StringPiece json1, StringPiece json2) {
   auto obj1 = parseJson(json1);
   auto obj2 = parseJson(json2);
   return obj1 == obj2;
+}
+
+bool compareJsonWithNestedJson(
+    StringPiece json1,
+    StringPiece json2,
+    unsigned strNestingDepth) {
+  auto obj1 = parseJson(json1);
+  auto obj2 = parseJson(json2);
+  return compareDynamicWithNestedJson(obj1, obj2, strNestingDepth);
+}
+
+bool compareDynamicWithNestedJson(
+    dynamic const& obj1,
+    dynamic const& obj2,
+    unsigned strNestingDepth) {
+  if (obj1 == obj2) {
+    return true;
+  }
+  if (strNestingDepth == 0) {
+    return false;
+  }
+  if (obj1.type() != obj2.type()) {
+    return false;
+  }
+
+  switch (obj1.type()) {
+    case dynamic::Type::ARRAY:
+      if (obj1.size() != obj2.size()) {
+        return false;
+      }
+      for (auto i1 = obj1.begin(), i2 = obj2.begin(); i1 != obj1.end();
+           ++i1, ++i2) {
+        if (!compareDynamicWithNestedJson(*i1, *i2, strNestingDepth)) {
+          return false;
+        }
+      }
+      return true;
+    case dynamic::Type::OBJECT:
+      if (obj1.size() != obj2.size()) {
+        return false;
+      }
+      return std::all_of(
+          obj1.items().begin(), obj1.items().end(), [&](const auto& item) {
+            const auto& value1 = item.second;
+            const auto value2 = obj2.get_ptr(item.first);
+            return value2 &&
+                compareDynamicWithNestedJson(value1, *value2, strNestingDepth);
+          });
+    case dynamic::Type::STRING:
+      if (obj1.getString().find('{') != std::string::npos &&
+          obj2.getString().find('{') != std::string::npos) {
+        try {
+          auto nested1 = parseJson(obj1.getString());
+          auto nested2 = parseJson(obj2.getString());
+          return compareDynamicWithNestedJson(
+              nested1, nested2, strNestingDepth - 1);
+        } catch (...) {
+          // parse error, rely on basic equality check already failed
+        }
+      }
+      return false;
+    case dynamic::Type::NULLT:
+    case dynamic::Type::BOOL:
+    case dynamic::Type::DOUBLE:
+    case dynamic::Type::INT64:
+    default:
+      return false;
+  }
+
+  assume_unreachable();
 }
 
 namespace {
@@ -87,7 +157,7 @@ bool compareDynamicWithTolerance(
                 compareDynamicWithTolerance(value1, *value2, tolerance);
           });
     case dynamic::Type::STRING:
-      return obj1.asString() == obj2.asString();
+      return obj1.getString() == obj2.getString();
   }
 
   assume_unreachable();

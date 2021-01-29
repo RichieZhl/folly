@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,18 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <folly/Optional.h>
 #include <folly/io/async/AsyncSSLSocket.h>
 #include <folly/io/async/AsyncSocket.h>
 #include <folly/io/async/SSLContext.h>
+#include <folly/net/NetworkSocket.h>
 
 class BlockingSocket : public folly::AsyncSocket::ConnectCallback,
                        public folly::AsyncTransportWrapper::ReadCallback,
                        public folly::AsyncTransportWrapper::WriteCallback {
  public:
-  explicit BlockingSocket(int fd)
+  explicit BlockingSocket(folly::NetworkSocket fd)
       : sock_(new folly::AsyncSocket(&eventBase_, fd)) {}
 
   BlockingSocket(
@@ -42,6 +44,10 @@ class BlockingSocket : public folly::AsyncSocket::ConnectCallback,
 
   void enableTFO() {
     sock_->enableTFO();
+  }
+
+  void setEorTracking(bool track) {
+    sock_->setEorTracking(track);
   }
 
   void setAddress(folly::SocketAddress address) {
@@ -64,8 +70,11 @@ class BlockingSocket : public folly::AsyncSocket::ConnectCallback,
     sock_->closeWithReset();
   }
 
-  int32_t write(uint8_t const* buf, size_t len) {
-    sock_->write(this, buf, len);
+  int32_t write(
+      uint8_t const* buf,
+      size_t len,
+      folly::WriteFlags flags = folly::WriteFlags::NONE) {
+    sock_->write(this, buf, len, flags);
     eventBase_.loop();
     if (err_.hasValue()) {
       throw err_.value();
@@ -83,8 +92,8 @@ class BlockingSocket : public folly::AsyncSocket::ConnectCallback,
     return readHelper(buf, len, false);
   }
 
-  int getSocketFD() const {
-    return sock_->getFd();
+  folly::NetworkSocket getNetworkSocket() const {
+    return sock_->getNetworkSocket();
   }
 
   folly::AsyncSocket* getSocket() {

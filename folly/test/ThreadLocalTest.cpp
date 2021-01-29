@@ -1,11 +1,11 @@
 /*
- * Copyright 2011-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -35,6 +35,7 @@
 #include <thread>
 #include <unordered_map>
 
+#include <boost/thread/barrier.hpp>
 #include <glog/logging.h>
 
 #include <folly/Memory.h>
@@ -520,6 +521,79 @@ TEST(ThreadLocal, Stress) {
   }
 
   EXPECT_EQ(numFillObjects * numThreads * numReps, gDestroyed);
+}
+
+struct StressAccessTag {};
+using TLPInt = ThreadLocalPtr<int, Tag>;
+
+static void tlpIntCustomDeleter(int* p, TLPDestructionMode /*unused*/) {
+  delete p;
+}
+
+template <typename Op, typename Check>
+void StresAccessTest(Op op, Check check) {
+  static constexpr size_t kNumThreads = 16;
+  static constexpr size_t kNumLoops = 10000;
+
+  TLPInt ptr;
+  ptr.reset(new int(0));
+  std::atomic<bool> running{true};
+
+  boost::barrier barrier(kNumThreads + 1);
+
+  std::vector<std::thread> threads;
+
+  for (size_t k = 0; k < kNumThreads; ++k) {
+    threads.emplace_back([&] {
+      ptr.reset(new int(1));
+
+      barrier.wait();
+
+      while (running.load()) {
+        op(ptr);
+      }
+    });
+  }
+
+  // wait for the threads to be up and running
+  barrier.wait();
+
+  for (size_t n = 0; n < kNumLoops; n++) {
+    int sum = 0;
+    auto accessor = ptr.accessAllThreads();
+    for (auto& i : accessor) {
+      sum += i;
+    }
+
+    check(sum, kNumThreads);
+  }
+
+  running.store(false);
+  for (auto& t : threads) {
+    t.join();
+  }
+}
+
+TEST(ThreadLocal, StressAccessReset) {
+  StresAccessTest(
+      [](TLPInt& ptr) { ptr.reset(new int(1)); },
+      [](size_t sum, size_t numThreads) { EXPECT_EQ(sum, numThreads); });
+}
+
+TEST(ThreadLocal, StressAccessResetDeleter) {
+  StresAccessTest(
+      [](TLPInt& ptr) { ptr.reset(new int(1), tlpIntCustomDeleter); },
+      [](size_t sum, size_t numThreads) { EXPECT_EQ(sum, numThreads); });
+}
+
+TEST(ThreadLocal, StressAccessRelease) {
+  StresAccessTest(
+      [](TLPInt& ptr) {
+        auto* p = ptr.release();
+        delete p;
+        ptr.reset(new int(1));
+      },
+      [](size_t sum, size_t numThreads) { EXPECT_LE(sum, numThreads); });
 }
 
 // Yes, threads and fork don't mix

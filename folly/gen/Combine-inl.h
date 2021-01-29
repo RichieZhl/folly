@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -194,8 +194,7 @@ class MergeTuples {
 
 } // namespace detail
 
-// TODO(mcurtiss): support zip() for N>1 operands. Because of variadic problems,
-// this might not be easily possible until gcc4.8 is available.
+// TODO(mcurtiss): support zip() for N>1 operands.
 template <
     class Source,
     class Zip = detail::Zip<typename std::decay<Source>::type>>

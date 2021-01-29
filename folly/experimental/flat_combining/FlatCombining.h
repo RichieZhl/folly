@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -201,7 +201,7 @@ class FlatCombining {
       static_assert(
           std::is_nothrow_constructible<
               folly::Function<void()>,
-              _t<std::decay<Func>>>::value,
+              std::decay_t<Func>>::value,
           "Try using a smaller function object that can fit in folly::Function "
           "without allocation, or use the custom interface of requestFC() to "
           "manage the requested function's arguments and results explicitly "

@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <folly/Likely.h>
@@ -21,6 +22,7 @@
 #include <folly/logging/LogStream.h>
 #include <folly/logging/Logger.h>
 #include <folly/logging/LoggerDB.h>
+#include <folly/logging/ObjectToString.h>
 #include <folly/logging/RateLimiter.h>
 #include <cstdlib>
 
@@ -112,21 +114,109 @@
       }(),                                                               \
       ##__VA_ARGS__)
 
+namespace folly {
+namespace detail {
+
+template <typename Tag>
+FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogEveryNImpl(size_t n) {
+  static std::atomic<size_t> count{0};
+  auto const value = count.load(std::memory_order_relaxed);
+  count.store(value + 1, std::memory_order_relaxed);
+  return FOLLY_UNLIKELY((value % n) == 0);
+}
+
+} // namespace detail
+} // namespace folly
+
 /**
  * Similar to XLOG(...) except only log a message every @param n
- * invocations.
+ * invocations, approximately.
  *
- * The internal counter is process-global and threadsafe.
+ * The internal counter is process-global and threadsafe but, to
+ * to avoid the performance degradation of atomic-rmw operations,
+ * increments are non-atomic. Some increments may be missed under
+ * contention, leading to possible over-logging or under-logging
+ * effects.
  */
-#define XLOG_EVERY_N(level, n, ...)                                            \
+#define XLOG_EVERY_N(level, n, ...)                                       \
+  XLOG_IF(                                                                \
+      level,                                                              \
+      [] {                                                                \
+        struct folly_detail_xlog_tag {};                                  \
+        return ::folly::detail::xlogEveryNImpl<folly_detail_xlog_tag>(n); \
+      }(),                                                                \
+      ##__VA_ARGS__)
+
+namespace folly {
+namespace detail {
+
+template <typename Tag>
+FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogEveryNExactImpl(size_t n) {
+  static std::atomic<size_t> count{0};
+  auto const value = count.fetch_add(1, std::memory_order_relaxed);
+  return FOLLY_UNLIKELY((value % n) == 0);
+}
+
+} // namespace detail
+} // namespace folly
+
+/**
+ * Similar to XLOG(...) except only log a message every @param n
+ * invocations, exactly.
+ *
+ * The internal counter is process-global and threadsafe and
+ * increments are atomic. The over-logging and under-logging
+ * schenarios of XLOG_EVERY_N(...) are avoided, traded off for
+ * the performance degradation of atomic-rmw operations.
+ */
+#define XLOG_EVERY_N_EXACT(level, n, ...)                                      \
   XLOG_IF(                                                                     \
       level,                                                                   \
       [] {                                                                     \
-        static std::atomic<size_t> folly_detail_xlog_count{0};                 \
-        return FOLLY_UNLIKELY(                                                 \
-            (folly_detail_xlog_count.fetch_add(1, std::memory_order_relaxed) % \
-             (n)) == 0);                                                       \
+        struct folly_detail_xlog_tag {};                                       \
+        return ::folly::detail::xlogEveryNExactImpl<folly_detail_xlog_tag>(n); \
       }(),                                                                     \
+      ##__VA_ARGS__)
+
+namespace folly {
+namespace detail {
+
+size_t& xlogEveryNThreadEntry(void const* const key);
+
+template <typename Tag>
+FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogEveryNThreadImpl(size_t n) {
+  static char key;
+  auto& count = xlogEveryNThreadEntry(&key);
+  return FOLLY_UNLIKELY((count++ % n) == 0);
+}
+
+} // namespace detail
+} // namespace folly
+
+/**
+ * Similar to XLOG(...) except only log a message every @param n
+ * invocations per thread.
+ *
+ * The internal counter is thread-local, avoiding the contention
+ * which the XLOG_EVERY_N variations which use a global counter
+ * may suffer. If a given XLOG_EVERY_N or variation expansion is
+ * encountered concurrently by multiple threads in a hot code
+ * path and the global counter in the expansion is observed to
+ * be contended, then switching to XLOG_EVERY_N_THREAD can help.
+ *
+ * Every thread that invokes this expansion has a counter for
+ * this expansion. The internal counters are all stored in a
+ * single thread-local map to control TLS overhead, at the cost
+ * of a small runtime performance hit.
+ */
+#define XLOG_EVERY_N_THREAD(level, n, ...)                                   \
+  XLOG_IF(                                                                   \
+      level,                                                                 \
+      [] {                                                                   \
+        struct folly_detail_xlog_tag {};                                     \
+        return ::folly::detail::xlogEveryNThreadImpl<folly_detail_xlog_tag>( \
+            n);                                                              \
+      }(),                                                                   \
       ##__VA_ARGS__)
 
 /**
@@ -308,8 +398,8 @@
 #endif
 
 #define XLOG_SET_CATEGORY_NAME(category)                   \
-  namespace {                                              \
   namespace xlog_detail {                                  \
+  namespace {                                              \
   XLOG_SET_CATEGORY_CHECK                                  \
   constexpr inline folly::StringPiece getXlogCategoryName( \
       folly::StringPiece,                                  \
@@ -332,12 +422,60 @@
 #define XCHECK(cond, ...) \
   XLOG_IF(FATAL, UNLIKELY(!(cond)), "Check failed: " #cond " ", ##__VA_ARGS__)
 
+namespace folly {
+namespace detail {
+template <typename Arg1, typename Arg2, typename CmpFn>
+std::unique_ptr<std::string> XCheckOpImpl(
+    folly::StringPiece checkStr,
+    const Arg1& arg1,
+    const Arg2& arg2,
+    CmpFn&& cmp_fn) {
+  if (LIKELY(cmp_fn(arg1, arg2))) {
+    return nullptr;
+  }
+  return std::make_unique<std::string>(folly::to<std::string>(
+      "Check failed: ",
+      checkStr,
+      " (",
+      ::folly::logging::objectToString(arg1),
+      " vs. ",
+      folly::logging::objectToString(arg2),
+      ")"));
+}
+} // namespace detail
+} // namespace folly
+
+#define XCHECK_OP(op, arg1, arg2, ...)                                        \
+  while (auto _folly_logging_check_result = ::folly::detail::XCheckOpImpl(    \
+             #arg1 " " #op " " #arg2,                                         \
+             (arg1),                                                          \
+             (arg2),                                                          \
+             [](const auto& _folly_check_arg1, const auto& _folly_check_arg2) \
+                 -> bool { return _folly_check_arg1 op _folly_check_arg2; })) \
+  XLOG(FATAL, *_folly_logging_check_result, ##__VA_ARGS__)
+
 /**
- * Assert that a condition is true in non-debug builds.
+ * Assert a comparison relationship between two arguments.
  *
- * When NDEBUG is set this behaves like XDCHECK()
- * When NDEBUG is not defined XDCHECK statements are not evaluated and will
- * never log.
+ * If the comparison check fails the values of both expressions being compared
+ * will be included in the failure message.  This is the main benefit of using
+ * these specific comparison macros over XCHECK().  XCHECK() will simply log
+ * that the expression evaluated was false, while these macros include the
+ * specific values being compared.
+ */
+#define XCHECK_EQ(arg1, arg2, ...) XCHECK_OP(==, arg1, arg2, ##__VA_ARGS__)
+#define XCHECK_NE(arg1, arg2, ...) XCHECK_OP(!=, arg1, arg2, ##__VA_ARGS__)
+#define XCHECK_LT(arg1, arg2, ...) XCHECK_OP(<, arg1, arg2, ##__VA_ARGS__)
+#define XCHECK_GT(arg1, arg2, ...) XCHECK_OP(>, arg1, arg2, ##__VA_ARGS__)
+#define XCHECK_LE(arg1, arg2, ...) XCHECK_OP(<=, arg1, arg2, ##__VA_ARGS__)
+#define XCHECK_GE(arg1, arg2, ...) XCHECK_OP(>=, arg1, arg2, ##__VA_ARGS__)
+
+/**
+ * Assert that a condition is true in debug builds only.
+ *
+ * When NDEBUG is not defined this behaves like XCHECK().
+ * When NDEBUG is defined XDCHECK statements are not evaluated and will never
+ * log.
  *
  * You can use `XLOG_IF(DFATAL, condition)` instead if you want the condition to
  * be evaluated in release builds but log a message without crashing the
@@ -345,6 +483,34 @@
  */
 #define XDCHECK(cond, ...) \
   (!::folly::kIsDebug) ? static_cast<void>(0) : XCHECK(cond, ##__VA_ARGS__)
+
+/*
+ * It would be nice to rely solely on folly::kIsDebug here rather than NDEBUG.
+ * However doing so would make the code substantially more complicated.  It is
+ * much simpler to simply change the definition of XDCHECK_OP() based on NDEBUG.
+ */
+#ifdef NDEBUG
+#define XDCHECK_OP(op, arg1, arg2, ...) \
+  while (false)                         \
+  XCHECK_OP(op, arg1, arg2, ##__VA_ARGS__)
+#else
+#define XDCHECK_OP(op, arg1, arg2, ...) XCHECK_OP(op, arg1, arg2, ##__VA_ARGS__)
+#endif
+
+/**
+ * Assert a comparison relationship between two arguments in debug builds.
+ *
+ * When NDEBUG is not set these macros behaves like the corresponding
+ * XCHECK_XX() versions (XCHECK_EQ(), XCHECK_NE(), etc).
+ *
+ * When NDEBUG is defined these statements are not evaluated and will never log.
+ */
+#define XDCHECK_EQ(arg1, arg2, ...) XDCHECK_OP(==, arg1, arg2, ##__VA_ARGS__)
+#define XDCHECK_NE(arg1, arg2, ...) XDCHECK_OP(!=, arg1, arg2, ##__VA_ARGS__)
+#define XDCHECK_LT(arg1, arg2, ...) XDCHECK_OP(<, arg1, arg2, ##__VA_ARGS__)
+#define XDCHECK_GT(arg1, arg2, ...) XDCHECK_OP(>, arg1, arg2, ##__VA_ARGS__)
+#define XDCHECK_LE(arg1, arg2, ...) XDCHECK_OP(<=, arg1, arg2, ##__VA_ARGS__)
+#define XDCHECK_GE(arg1, arg2, ...) XDCHECK_OP(>=, arg1, arg2, ##__VA_ARGS__)
 
 /**
  * XLOG_IS_IN_HEADER_FILE evaluates to false if we can definitively tell if we
@@ -585,8 +751,8 @@ constexpr const char* xlogStripFilename(
  * We want each .cpp file that uses xlog.h to get its own separate
  * implementation of the following functions and variables.
  */
-namespace {
 namespace xlog_detail {
+namespace {
 /**
  * The default getXlogCategoryName() function.
  *
@@ -636,5 +802,5 @@ constexpr inline bool isXlogCategoryOverridden(T) {
  * statement.
  */
 ::folly::XlogFileScopeInfo xlogFileScopeInfo;
-} // namespace xlog_detail
 } // namespace
+} // namespace xlog_detail

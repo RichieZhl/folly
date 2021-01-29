@@ -1,11 +1,11 @@
 /*
- * Copyright 2012-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -216,6 +216,10 @@ testWithLock() {
   obj.withWLock([](const std::vector<int>& lockedObj) {
     EXPECT_EQ(1002, lockedObj.size());
   });
+  constObj.withWLock([](const std::vector<int>& lockedObj) {
+    EXPECT_EQ(1002, lockedObj.size());
+    EXPECT_EQ(11, lockedObj.back());
+  });
   obj.withRLock([](const std::vector<int>& lockedObj) {
     EXPECT_EQ(1002, lockedObj.size());
     EXPECT_EQ(11, lockedObj.back());
@@ -228,6 +232,10 @@ testWithLock() {
   obj.withWLock([](auto& lockedObj) { lockedObj.push_back(12); });
   obj.withWLock(
       [](const auto& lockedObj) { EXPECT_EQ(1003, lockedObj.size()); });
+  constObj.withWLock([](const auto& lockedObj) {
+    EXPECT_EQ(1003, lockedObj.size());
+    EXPECT_EQ(12, lockedObj.back());
+  });
   obj.withRLock([](const auto& lockedObj) {
     EXPECT_EQ(1003, lockedObj.size());
     EXPECT_EQ(12, lockedObj.back());
@@ -257,6 +265,10 @@ testWithLock() {
     }
     EXPECT_EQ(15, lockedObj->back());
   });
+  constObj.withWLockPtr([](auto&& lockedObj) {
+    EXPECT_EQ(1005, lockedObj->size());
+    EXPECT_EQ(15, lockedObj->back());
+  });
 #else
   obj.withWLockPtr([](typename SynchType::LockedPtr&& lockedObj) {
     lockedObj->push_back(13);
@@ -269,11 +281,19 @@ testWithLock() {
     lockedObj->push_back(16);
     EXPECT_EQ(1006, lockedObj->size());
   });
-  obj.withRLockPtr([](typename SynchType::ConstLockedPtr&& lockedObj) {
+  constObj.withWLockPtr([](typename SynchType::ConstWLockedPtr&& lockedObj) {
     EXPECT_EQ(1006, lockedObj->size());
     EXPECT_EQ(16, lockedObj->back());
   });
-  constObj.withRLockPtr([](typename SynchType::ConstLockedPtr&& lockedObj) {
+  obj.withRLockPtr([](typename SynchType::RLockedPtr&& lockedObj) {
+    EXPECT_TRUE(
+        (std::is_const<std::remove_reference_t<decltype(*lockedObj)>>{}));
+    EXPECT_EQ(1006, lockedObj->size());
+    EXPECT_EQ(16, lockedObj->back());
+  });
+  constObj.withRLockPtr([](typename SynchType::ConstRLockedPtr&& lockedObj) {
+    EXPECT_TRUE(
+        (std::is_const<std::remove_reference_t<decltype(*lockedObj)>>{}));
     EXPECT_EQ(1006, lockedObj->size());
     EXPECT_EQ(16, lockedObj->back());
   });
@@ -441,16 +461,16 @@ template <class Mutex>
 void testDeprecated() {
   folly::Synchronized<std::vector<int>, Mutex> obj;
 
-  obj->resize(1000);
+  obj.contextualLock()->resize(1000);
 
   auto obj2 = obj;
-  EXPECT_EQ(1000, obj2->size());
+  EXPECT_EQ(1000, obj2.contextualLock()->size());
 
   SYNCHRONIZED(obj) {
     obj.push_back(10);
     EXPECT_EQ(1001, obj.size());
     EXPECT_EQ(10, obj.back());
-    EXPECT_EQ(1000, obj2->size());
+    EXPECT_EQ(1000, obj2.contextualLock()->size());
   }
 
   SYNCHRONIZED_CONST(obj) {
@@ -461,9 +481,9 @@ void testDeprecated() {
     lockedObj.front() = 2;
   }
 
-  EXPECT_EQ(1001, obj->size());
-  EXPECT_EQ(10, obj->back());
-  EXPECT_EQ(1000, obj2->size());
+  EXPECT_EQ(1001, obj.contextualLock()->size());
+  EXPECT_EQ(10, obj.contextualLock()->back());
+  EXPECT_EQ(1000, obj2.contextualLock()->size());
 
   EXPECT_EQ(FB_ARG_2_OR_1(1, 2), 2);
   EXPECT_EQ(FB_ARG_2_OR_1(1), 1);
@@ -633,7 +653,7 @@ void testDualLockingWithConst() {
 template <class Mutex>
 void testTimed() {
   folly::Synchronized<std::vector<int>, Mutex> v;
-  folly::Synchronized<uint64_t, Mutex> numTimeouts;
+  folly::Synchronized<uint64_t, Mutex> numTimeouts{0};
 
   auto worker = [&](size_t threadIdx) {
     // Test directly using operator-> on the lock result
@@ -691,7 +711,7 @@ void testTimed() {
 template <class Mutex>
 void testTimedShared() {
   folly::Synchronized<std::vector<int>, Mutex> v;
-  folly::Synchronized<uint64_t, Mutex> numTimeouts;
+  folly::Synchronized<uint64_t, Mutex> numTimeouts{0};
 
   auto worker = [&](size_t threadIdx) {
     // Test directly using operator-> on the lock result
@@ -744,11 +764,11 @@ void testTimedShared() {
 template <class Mutex>
 void testTimedSynchronized() {
   folly::Synchronized<std::vector<int>, Mutex> v;
-  folly::Synchronized<uint64_t, Mutex> numTimeouts;
+  folly::Synchronized<uint64_t, Mutex> numTimeouts{0};
 
   auto worker = [&](size_t threadIdx) {
-    // Test operator->
-    v->push_back(2 * threadIdx);
+    // Test contextualLock()
+    v.contextualLock()->push_back(2 * threadIdx);
 
     // Aaand test the TIMED_SYNCHRONIZED macro
     for (;;) {
@@ -791,11 +811,11 @@ void testTimedSynchronized() {
 template <class Mutex>
 void testTimedSynchronizedWithConst() {
   folly::Synchronized<std::vector<int>, Mutex> v;
-  folly::Synchronized<uint64_t, Mutex> numTimeouts;
+  folly::Synchronized<uint64_t, Mutex> numTimeouts{0};
 
   auto worker = [&](size_t threadIdx) {
-    // Test operator->
-    v->push_back(threadIdx);
+    // Test contextualLock()
+    v.contextualLock()->push_back(threadIdx);
 
     // Test TIMED_SYNCHRONIZED_CONST
     for (;;) {
@@ -848,7 +868,7 @@ void testConstCopy() {
 
   std::vector<int> result;
 
-  v.copy(&result);
+  v.copyInto(result);
   EXPECT_EQ(input, result);
 
   result = v.copy();

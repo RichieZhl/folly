@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# Copyright (c) Facebook, Inc. and its affiliates.
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -86,6 +87,10 @@ class FBCodeBuilder(object):
         # This raises upon detecting options that are specified but unused,
         # because otherwise it is very easy to make a typo in option names.
         self.options_used = set()
+        # Mark 'projects_dir' used even if the build installs no github
+        # projects.  This is needed because driver programs like
+        # `shell_builder.py` unconditionally set this for all builds.
+        self._github_dir = self.option('projects_dir')
         self._github_hashes = dict(_read_project_github_hashes())
 
     def __repr__(self):
@@ -167,6 +172,10 @@ class FBCodeBuilder(object):
         'Run this bash command'
         raise NotImplementedError
 
+    def set_env(self, key, value):
+        'Set the environment "key" to value "value"'
+        raise NotImplementedError
+
     def workdir(self, dir):
         'Create this directory if it does not exist, and change into it'
         raise NotImplementedError
@@ -177,6 +186,12 @@ class FBCodeBuilder(object):
           cp -r /path/to/folly folly
         '''
         raise NotImplementedError
+
+    def python_deps(self):
+        return [
+            'wheel',
+            'cython==0.28.6',
+        ]
 
     def debian_deps(self):
         return [
@@ -209,6 +224,7 @@ class FBCodeBuilder(object):
             'sudo',
             'unzip',
             'wget',
+            'python3-venv',
         ]
 
     #
@@ -245,6 +261,71 @@ class FBCodeBuilder(object):
 
         return self.step('Install packages for Debian-based OS', actions)
 
+    def create_python_venv(self):
+        actions = []
+        if self.option("PYTHON_VENV", "OFF") == "ON":
+            actions.append(self.run(ShellQuoted("python3 -m venv {p}").format(
+                p=path_join(self.option('prefix'), "venv"))))
+        return(actions)
+
+    def python_venv(self):
+        actions = []
+        if self.option("PYTHON_VENV", "OFF") == "ON":
+            actions.append(ShellQuoted("source {p}").format(
+                p=path_join(self.option('prefix'), "venv", "bin", "activate")))
+
+            actions.append(self.run(
+                ShellQuoted("python3 -m pip install {deps}").format(
+                    deps=shell_join(' ', (ShellQuoted(dep) for dep in
+                        self.python_deps())))))
+        return(actions)
+
+    def enable_rust_toolchain(self, toolchain="stable", is_bootstrap=True):
+        choices = set(["stable", "beta", "nightly"])
+
+        assert toolchain in choices, (
+            "while enabling rust toolchain: {} is not in {}"
+        ).format(toolchain, choices)
+
+        rust_toolchain_opt = (toolchain, is_bootstrap)
+        prev_opt = self.option("rust_toolchain", rust_toolchain_opt)
+        assert prev_opt == rust_toolchain_opt, (
+            "while enabling rust toolchain: previous toolchain already set to"
+            " {}, but trying to set it to {} now"
+        ).format(prev_opt, rust_toolchain_opt)
+
+        self.add_option("rust_toolchain", rust_toolchain_opt)
+
+    def rust_toolchain(self):
+        actions = []
+        if self.option("rust_toolchain", False):
+            (toolchain, is_bootstrap) = self.option("rust_toolchain")
+            rust_dir = path_join(self.option("prefix"), "rust")
+            actions = [
+                self.set_env("CARGO_HOME", rust_dir),
+                self.set_env("RUSTUP_HOME", rust_dir),
+                self.set_env("RUSTC_BOOTSTRAP", "1" if is_bootstrap else "0"),
+                self.run(
+                    ShellQuoted(
+                        "curl -sSf https://build.travis-ci.com/files/rustup-init.sh"
+                        " | sh -s --"
+                        "   --default-toolchain={r} "
+                        "   --profile=minimal"
+                        "   --no-modify-path"
+                        "   -y"
+                    ).format(p=rust_dir, r=toolchain)
+                ),
+                self.set_env(
+                    "PATH",
+                    ShellQuoted("{p}:$PATH").format(p=path_join(rust_dir, "bin")),
+                ),
+                self.run(ShellQuoted("rustup update")),
+                self.run(ShellQuoted("rustc --version")),
+                self.run(ShellQuoted("rustup --version")),
+                self.run(ShellQuoted("cargo --version")),
+            ]
+        return actions
+
     def debian_ccache_setup_steps(self):
         return []  # It's ok to ship a renderer without ccache support.
 
@@ -261,17 +342,19 @@ class FBCodeBuilder(object):
             self.run(ShellQuoted('git checkout {hash}').format(hash=git_hash)),
         ] if git_hash else []
 
-        base_dir = self.option('projects_dir')
-
         local_repo_dir = self.option('{0}:local_repo_dir'.format(project), '')
         return self.step('Check out {0}, workdir {1}'.format(project, path), [
-            self.workdir(base_dir),
+            self.workdir(self._github_dir),
             self.run(
-                ShellQuoted('git clone https://github.com/{p}').format(p=project)
+                ShellQuoted('git clone {opts} https://github.com/{p}').format(
+                    p=project,
+                    opts=ShellQuoted(self.option('{}:git_clone_opts'.format(project), '')))
             ) if not local_repo_dir else self.copy_local_repo(
                 local_repo_dir, os.path.basename(project)
             ),
-            self.workdir(path_join(base_dir, os.path.basename(project), path)),
+            self.workdir(
+                path_join(self._github_dir, os.path.basename(project), path),
+            ),
         ] + maybe_change_branch)
 
     def fb_github_project_workdir(self, project_and_path, github_org='facebook'):
@@ -286,7 +369,7 @@ class FBCodeBuilder(object):
         ))
 
     def parallel_make(self, make_vars=None):
-        return self.run(ShellQuoted('make -j {n} {vars}').format(
+        return self.run(ShellQuoted('make -j {n} VERBOSE=1 {vars}').format(
             n=self.option('make_parallelism'),
             vars=self._make_vars(make_vars),
         ))
@@ -294,7 +377,7 @@ class FBCodeBuilder(object):
     def make_and_install(self, make_vars=None):
         return [
             self.parallel_make(make_vars),
-            self.run(ShellQuoted('make install {vars}').format(
+            self.run(ShellQuoted('make install VERBOSE=1 {vars}').format(
                 vars=self._make_vars(make_vars),
             )),
         ]
@@ -355,6 +438,18 @@ class FBCodeBuilder(object):
             self.cmake_configure(name, cmake_path) + self.make_and_install()
         )
 
+    def cargo_build(self, name):
+        return self.step(
+            "Build {0}".format(name),
+            [
+                self.run(
+                    ShellQuoted("cargo build -j {n}").format(
+                        n=self.option("make_parallelism")
+                    )
+                )
+            ],
+        )
+
     def fb_github_autoconf_install(self, project_and_path, github_org='facebook'):
         return [
             self.fb_github_project_workdir(project_and_path, github_org),
@@ -365,4 +460,10 @@ class FBCodeBuilder(object):
         return [
             self.fb_github_project_workdir(project_and_path, github_org),
             self.cmake_install(project_and_path, cmake_path),
+        ]
+
+    def fb_github_cargo_build(self, project_and_path, github_org="facebook"):
+        return [
+            self.fb_github_project_workdir(project_and_path, github_org),
+            self.cargo_build(project_and_path),
         ]

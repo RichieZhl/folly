@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -251,6 +251,50 @@ TEST(LockFreeRingBuffer, moveBackwardsCanFail) {
   EXPECT_TRUE(cursor.moveBackward());
   EXPECT_TRUE(cursor.moveBackward()); // now at 0
   EXPECT_FALSE(cursor.moveBackward()); // moving back does nothing
+}
+
+TEST(LockFreeRingBuffer, writeReadDifferentType) {
+  struct FixedBuffer {
+    char data_[1024];
+
+    FixedBuffer() noexcept {
+      data_[0] = '\0';
+    }
+
+    FixedBuffer& operator=(std::string&& data) {
+      strncpy(data_, data.c_str(), sizeof(data_) - 1);
+
+      return (*this);
+    }
+  };
+
+  struct StringBuffer {
+    char data_[1024];
+
+    StringBuffer() noexcept {
+      data_[0] = '\0';
+    }
+
+    StringBuffer& operator=(FixedBuffer& data) {
+      static_assert(
+          sizeof(data_) == sizeof(data.data_),
+          "FixedBuffer::data_ size must match StringBuffer::data_");
+      memcpy(data_, data.data_, sizeof(data.data_));
+      return (*this);
+    }
+  };
+
+  std::string str("Test");
+
+  const int capacity = 3;
+  LockFreeRingBuffer<FixedBuffer> rb(capacity);
+  rb.write(str);
+
+  auto cursor = rb.currentTail();
+  StringBuffer result;
+  EXPECT_TRUE(rb.tryRead(result, cursor));
+
+  EXPECT_EQ(str, result.data_);
 }
 
 } // namespace folly

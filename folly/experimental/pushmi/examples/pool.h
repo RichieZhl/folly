@@ -1,12 +1,11 @@
-#pragma once
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,66 +14,81 @@
  * limitations under the License.
  */
 
-#include <experimental/thread_pool> // @manual
+#pragma once
 
-#include <folly/experimental/pushmi/executor.h>
-#include <folly/experimental/pushmi/time_single_sender.h>
-#include <folly/experimental/pushmi/trampoline.h>
+#include <folly/experimental/pushmi/properties.h>
+#include <folly/experimental/pushmi/receiver/concepts.h>
+#include <folly/experimental/pushmi/sender/tags.h>
+#include <folly/experimental/pushmi/sender/properties.h>
+#include <folly/experimental/pushmi/executor/properties.h>
 
-#if __cpp_deduction_guides >= 201703
-#define MAKE(x) x MAKE_
-#define MAKE_(...) \
-  { __VA_ARGS__ }
-#else
-#define MAKE(x) make_##x
-#endif
+#include <folly/Executor.h>
+#include <folly/executors/CPUThreadPoolExecutor.h>
 
+namespace folly {
 namespace pushmi {
 
-using std::experimental::static_thread_pool;
-namespace execution = std::experimental::execution;
+class pool;
 
-template <class Executor>
-struct pool_executor {
-  using properties = property_set<
-      is_sender<>,
-      is_executor<>,
-      is_never_blocking<>,
-      is_concurrent_sequence<>,
-      is_single<>>;
+class pool_executor {
+  struct task;
+  Executor::KeepAlive<CPUThreadPoolExecutor> exec_ {};
 
-  using e_t = Executor;
-  e_t e;
-  explicit pool_executor(e_t e) : e(std::move(e)) {}
-  auto executor() {
-    return *this;
-  }
+public:
+  using properties = property_set<is_concurrent_sequence<>>;
+
+  pool_executor() = default;
+  explicit pool_executor(pool &e);
+  task schedule();
+};
+
+struct pool_executor::task
+: single_sender_tag::with_values<pool_executor&>::no_error {
+  using properties = property_set<is_never_blocking<>>;
+
+  explicit task(pool_executor e)
+    : pool_ex_(std::move(e))
+  {}
+
   PUSHMI_TEMPLATE(class Out)
-  (requires Receiver<Out>)void submit(Out out) const {
-    e.execute([e = *this, out = std::move(out)]() mutable {
-      ::pushmi::set_value(out, e);
+    (requires ReceiveValue<Out, pool_executor&>)
+  void submit(Out out) && {
+    pool_ex_.exec_->add([e = pool_ex_, out = std::move(out)]() mutable {
+      set_value(out, e);
+      set_done(out);
     });
   }
+private:
+  pool_executor pool_ex_;
 };
 
 class pool {
-  static_thread_pool p;
+  friend pool_executor;
+  CPUThreadPoolExecutor pool_;
 
- public:
-  inline explicit pool(std::size_t threads) : p(threads) {}
+public:
+  explicit pool(std::size_t threads) : pool_(threads) {}
 
-  inline auto executor() {
-    auto exec = execution::require(
-        p.executor(), execution::never_blocking, execution::oneway);
-    return pool_executor<decltype(exec)>{exec};
+  auto executor() {
+    return pool_executor{*this};
   }
 
-  inline void stop() {
-    p.stop();
+  void stop() {
+    pool_.stop();
   }
-  inline void wait() {
-    p.wait();
+
+  void wait() {
+    pool_.join();
   }
 };
 
+inline pool_executor::pool_executor(pool &e)
+: exec_(Executor::getKeepAliveToken(e.pool_))
+{}
+
+inline pool_executor::task pool_executor::schedule() {
+  return task{*this};
+}
+
 } // namespace pushmi
+} // namespace folly

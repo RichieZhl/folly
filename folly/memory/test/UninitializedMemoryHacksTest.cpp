@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -33,8 +33,6 @@ void describePlatform() {
   LOG(INFO) << "std::string from libc++";
 #elif defined(_STLP_STRING)
   LOG(INFO) << "std::string from STLport";
-#elif defined(_GLIBCXX_USE_FB)
-  LOG(INFO) << "std::string from FBString";
 #elif defined(_GLIBCXX_STRING) && _GLIBCXX_USE_CXX11_ABI
   LOG(INFO) << "std::string from libstdc++ with SSO";
 #elif defined(_GLIBCXX_STRING)

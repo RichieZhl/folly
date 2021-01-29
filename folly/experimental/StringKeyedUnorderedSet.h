@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,17 +16,15 @@
 
 #pragma once
 
-#include <folly/Range.h>
 #include <folly/container/F14Set.h>
 
 namespace folly {
 
 template <
-    class Hash = hasher<StringPiece>,
-    class Eq = std::equal_to<StringPiece>,
+    class Hash = f14::DefaultHasher<std::string>,
+    class Eq = f14::DefaultKeyEqual<std::string>,
     class Alloc = f14::DefaultAlloc<std::string>>
-using BasicStringKeyedUnorderedSet =
-    F14NodeSet<std::string, transparent<Hash>, transparent<Eq>, Alloc>;
+using BasicStringKeyedUnorderedSet = F14NodeSet<std::string, Hash, Eq, Alloc>;
 
 using StringKeyedUnorderedSet = BasicStringKeyedUnorderedSet<>;
 

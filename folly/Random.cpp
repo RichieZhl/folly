@@ -1,11 +1,11 @@
 /*
- * Copyright 2011-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,13 +21,13 @@
 #include <mutex>
 #include <random>
 
+#include <folly/CppAttributes.h>
 #include <folly/File.h>
 #include <folly/FileUtil.h>
 #include <folly/SingletonThreadLocal.h>
 #include <folly/ThreadLocal.h>
 #include <folly/portability/SysTime.h>
 #include <folly/portability/Unistd.h>
-#include <folly/synchronization/CallOnce.h>
 #include <glog/logging.h>
 
 #ifdef _MSC_VER
@@ -40,25 +40,21 @@ namespace {
 
 void readRandomDevice(void* data, size_t size) {
 #ifdef _MSC_VER
-  static folly::once_flag flag;
-  static HCRYPTPROV cryptoProv;
-  folly::call_once(flag, [&] {
+  static auto const cryptoProv = [] {
+    HCRYPTPROV prov;
     if (!CryptAcquireContext(
-            &cryptoProv,
-            nullptr,
-            nullptr,
-            PROV_RSA_FULL,
-            CRYPT_VERIFYCONTEXT)) {
+            &prov, nullptr, nullptr, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
       if (GetLastError() == NTE_BAD_KEYSET) {
         // Mostly likely cause of this is that no key container
         // exists yet, so try to create one.
         PCHECK(CryptAcquireContext(
-            &cryptoProv, nullptr, nullptr, PROV_RSA_FULL, CRYPT_NEWKEYSET));
+            &prov, nullptr, nullptr, PROV_RSA_FULL, CRYPT_NEWKEYSET));
       } else {
         LOG(FATAL) << "Failed to acquire the default crypto context.";
       }
     }
-  });
+    return prov;
+  }();
   CHECK(size <= std::numeric_limits<DWORD>::max());
   PCHECK(CryptGenRandom(cryptoProv, (DWORD)size, (BYTE*)data));
 #else
@@ -66,13 +62,13 @@ void readRandomDevice(void* data, size_t size) {
   static int randomFd = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
   PCHECK(randomFd >= 0);
   auto bytesRead = readFull(randomFd, data, size);
-  PCHECK(bytesRead >= 0 && size_t(bytesRead) == size);
+  PCHECK(bytesRead >= 0);
+  CHECK_EQ(size_t(bytesRead), size);
 #endif
 }
 
 class BufferedRandomDevice {
  public:
-  static once_flag flag;
   static constexpr size_t kDefaultBufferSize = 128;
 
   static void notifyNewGlobalEpoch() {
@@ -106,7 +102,6 @@ class BufferedRandomDevice {
   unsigned char* ptr_;
 };
 
-once_flag BufferedRandomDevice::flag;
 std::atomic<size_t> BufferedRandomDevice::globalEpoch_{0};
 struct RandomTag {};
 
@@ -114,9 +109,9 @@ BufferedRandomDevice::BufferedRandomDevice(size_t bufferSize)
     : bufferSize_(bufferSize),
       buffer_(new unsigned char[bufferSize]),
       ptr_(buffer_.get() + bufferSize) { // refill on first use
-  call_once(flag, [this]() {
+  FOLLY_MAYBE_UNUSED static auto const init = [] {
     detail::AtFork::registerHandler(
-        this,
+        nullptr,
         /*prepare*/ []() { return true; },
         /*parent*/ []() {},
         /*child*/
@@ -124,7 +119,8 @@ BufferedRandomDevice::BufferedRandomDevice(size_t bufferSize)
           // Ensure child and parent do not share same entropy pool.
           BufferedRandomDevice::notifyNewGlobalEpoch();
         });
-  });
+    return 0;
+  }();
 }
 
 void BufferedRandomDevice::getSlow(unsigned char* data, size_t size) {

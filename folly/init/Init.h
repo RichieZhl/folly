@@ -1,11 +1,11 @@
 /*
- * Copyright 2016-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -49,6 +49,11 @@ class Init {
   // Force ctor & dtor out of line for better stack traces even with LTO.
   FOLLY_NOINLINE Init(int* argc, char*** argv, bool removeFlags = true);
   FOLLY_NOINLINE ~Init();
+
+  Init(Init const&) = delete;
+  Init(Init&&) = delete;
+  Init& operator=(Init const&) = delete;
+  Init& operator=(Init&&) = delete;
 };
 
 } // namespace folly

@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/ssl/OpenSSLCertUtils.h>
 
 #include <folly/FileUtil.h>
@@ -22,6 +23,14 @@
 
 namespace folly {
 namespace ssl {
+
+namespace {
+std::string getOpenSSLErrorString(unsigned long err) {
+  std::array<char, 256> errBuff;
+  ERR_error_string_n(err, errBuff.data(), errBuff.size());
+  return std::string(errBuff.data());
+}
+} // namespace
 
 Optional<std::string> OpenSSLCertUtils::getCommonName(X509& x509) {
   auto subject = X509_get_subject_name(&x509);
@@ -148,11 +157,32 @@ folly::Optional<std::string> OpenSSLCertUtils::toString(X509& x509) {
 }
 
 std::string OpenSSLCertUtils::getNotAfterTime(X509& x509) {
-  return getDateTimeStr(X509_get_notAfter(&x509));
+  return getDateTimeStr(X509_get0_notAfter(&x509));
 }
 
 std::string OpenSSLCertUtils::getNotBeforeTime(X509& x509) {
-  return getDateTimeStr(X509_get_notBefore(&x509));
+  return getDateTimeStr(X509_get0_notBefore(&x509));
+}
+
+std::chrono::system_clock::time_point OpenSSLCertUtils::asnTimeToTimepoint(
+    const ASN1_TIME* asnTime) {
+  int dSecs = 0;
+  int dDays = 0;
+
+  auto epoch_time_t = std::chrono::system_clock::to_time_t(
+      std::chrono::system_clock::time_point());
+  folly::ssl::ASN1TimeUniquePtr epoch_asn(ASN1_TIME_set(nullptr, epoch_time_t));
+
+  if (!epoch_asn) {
+    throw std::runtime_error("failed to allocate epoch asn.1 time");
+  }
+
+  if (ASN1_TIME_diff(&dDays, &dSecs, epoch_asn.get(), asnTime) != 1) {
+    throw std::runtime_error("invalid asn.1 time");
+  }
+
+  return std::chrono::system_clock::time_point(
+      std::chrono::seconds(dSecs) + std::chrono::hours(24 * dDays));
 }
 
 std::string OpenSSLCertUtils::getDateTimeStr(const ASN1_TIME* time) {
@@ -206,15 +236,26 @@ std::vector<X509UniquePtr> OpenSSLCertUtils::readCertsFromBuffer(
     throw std::runtime_error("failed to create BIO");
   }
   std::vector<X509UniquePtr> certs;
+  ERR_clear_error();
   while (true) {
     X509UniquePtr x509(PEM_read_bio_X509(b.get(), nullptr, nullptr, nullptr));
-    if (!x509) {
-      ERR_clear_error();
+    if (x509) {
+      certs.push_back(std::move(x509));
+      continue;
+    }
+    auto err = ERR_get_error();
+    ERR_clear_error();
+    if (BIO_eof(b.get()) && ERR_GET_LIB(err) == ERR_LIB_PEM &&
+        ERR_GET_REASON(err) == PEM_R_NO_START_LINE) {
+      // Reach end of buffer.
       break;
     }
-    certs.push_back(std::move(x509));
+    throw std::runtime_error(folly::to<std::string>(
+        "Unable to parse cert ",
+        certs.size(),
+        ": ",
+        getOpenSSLErrorString(err)));
   }
-
   return certs;
 }
 
@@ -248,8 +289,7 @@ X509StoreUniquePtr OpenSSLCertUtils::readStoreFromFile(std::string caFile) {
     throw std::runtime_error(
         folly::to<std::string>("Could not read store file: ", caFile));
   }
-  auto certRange = folly::ByteRange(folly::StringPiece(certData));
-  return readStoreFromBuffer(std::move(certRange));
+  return readStoreFromBuffer(folly::StringPiece(certData));
 }
 
 X509StoreUniquePtr OpenSSLCertUtils::readStoreFromBuffer(ByteRange certRange) {
@@ -261,11 +301,9 @@ X509StoreUniquePtr OpenSSLCertUtils::readStoreFromBuffer(ByteRange certRange) {
       auto err = ERR_get_error();
       if (ERR_GET_LIB(err) != ERR_LIB_X509 ||
           ERR_GET_REASON(err) != X509_R_CERT_ALREADY_IN_HASH_TABLE) {
-        std::array<char, 256> errBuff;
-        ERR_error_string_n(err, errBuff.data(), errBuff.size());
         throw std::runtime_error(folly::to<std::string>(
             "Could not insert CA certificate into store: ",
-            std::string(errBuff.data())));
+            getOpenSSLErrorString(err)));
       }
     }
   }

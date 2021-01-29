@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -50,7 +50,11 @@ namespace folly {
  *
  * If binary isn't linked with jemalloc, the logic falls back to malloc / free.
  *
- * Note that the madvise call does not guarantee huge pages, it is best effort.
+ * Please note that as per kernel contract, page faults on an madvised region
+ * will block, so we pre-allocate all the huge pages by touching the pages.
+ * So, please only allocate as much you need as this will never be freed
+ * during the lifetime of the application. If we run out of the free huge pages,
+ * then huge page allocator falls back to the 4K regular pages.
  *
  * 1GB Huge Pages are not supported at this point.
  */

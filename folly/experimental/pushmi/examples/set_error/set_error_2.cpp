@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <algorithm>
 #include <cassert>
 #include <iostream>
@@ -25,17 +26,19 @@
 #include <folly/experimental/pushmi/o/switch_on_error.h>
 #include <folly/experimental/pushmi/o/transform.h>
 
-using namespace pushmi::aliases;
+using namespace folly::pushmi::aliases;
 
 // concat not yet implemented
 template <class T, class E = std::exception_ptr>
-auto concat = [](auto in) {
-  return mi::make_single_sender([in](auto out) mutable {
-    ::pushmi::submit(in, mi::make_receiver(out, [](auto out, auto v) {
-                       ::pushmi::submit(v, mi::any_receiver<E, T>(out));
-                     }));
-  });
-};
+auto concat() {
+  return [](auto in) {
+    return mi::make_single_sender([in](auto out) mutable {
+      mi::submit(in, mi::make_receiver(out, [](auto out_, auto v) {
+                   mi::submit(v, mi::any_receiver<E, T>(out_));
+                 }));
+    });
+  };
+}
 
 int main() {
   auto stop_abort = mi::on_error([](auto) noexcept {});
@@ -72,11 +75,11 @@ int main() {
   op::just(42) | op::transform([](auto v) {
     using r_t = mi::any_single_sender<std::exception_ptr, int>;
     if (v < 40) {
-      return r_t{op::error<int>(std::exception_ptr{})};
+      return r_t{op::error(std::exception_ptr{})};
     } else {
       return r_t{op::just(v)};
     }
-  }) | concat<int> |
+  }) | concat<int>() |
       op::submit();
 
   // retry on error

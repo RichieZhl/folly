@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #ifndef __STDC_FORMAT_MACROS
 #define __STDC_FORMAT_MACROS
 #endif
@@ -27,14 +28,102 @@
 
 #include <folly/Memory.h>
 #include <folly/String.h>
+#include <folly/io/async/EventBaseBackendBase.h>
 #include <folly/io/async/NotificationQueue.h>
 #include <folly/io/async/VirtualEventBase.h>
 #include <folly/portability/Unistd.h>
 #include <folly/synchronization/Baton.h>
 #include <folly/system/ThreadName.h>
 
-namespace folly {
+namespace {
+class EventBaseBackend : public folly::EventBaseBackendBase {
+ public:
+  EventBaseBackend();
+  explicit EventBaseBackend(event_base* evb);
+  ~EventBaseBackend() override;
 
+  event_base* getEventBase() override {
+    return evb_;
+  }
+
+  int eb_event_base_loop(int flags) override;
+  int eb_event_base_loopbreak() override;
+
+  int eb_event_add(Event& event, const struct timeval* timeout) override;
+  int eb_event_del(EventBaseBackendBase::Event& event) override;
+
+ private:
+  event_base* evb_;
+};
+
+// The interface used to libevent is not thread-safe.  Calls to
+// event_init() and event_base_free() directly modify an internal
+// global 'current_base', so a mutex is required to protect this.
+//
+// event_init() should only ever be called once.  Subsequent calls
+// should be made to event_base_new().  We can recognise that
+// event_init() has already been called by simply inspecting current_base.
+std::mutex libevent_mutex_;
+
+EventBaseBackend::EventBaseBackend() {
+  struct event ev;
+  {
+    std::lock_guard<std::mutex> lock(libevent_mutex_);
+
+    // The value 'current_base' (libevent 1) or
+    // 'event_global_current_base_' (libevent 2) is filled in by event_set(),
+    // allowing examination of its value without an explicit reference here.
+    // If ev.ev_base is nullptr, then event_init() must be called, otherwise
+    // call event_base_new().
+    ::event_set(&ev, 0, 0, nullptr, nullptr);
+    if (!ev.ev_base) {
+      evb_ = event_init();
+    }
+  }
+
+  if (ev.ev_base) {
+    evb_ = ::event_base_new();
+  }
+
+  if (UNLIKELY(evb_ == nullptr)) {
+    LOG(ERROR) << "EventBase(): Failed to init event base.";
+    folly::throwSystemError("error in EventBaseBackend::EventBaseBackend()");
+  }
+}
+
+EventBaseBackend::EventBaseBackend(event_base* evb) : evb_(evb) {
+  if (UNLIKELY(evb_ == nullptr)) {
+    LOG(ERROR) << "EventBase(): Pass nullptr as event base.";
+    throw std::invalid_argument("EventBase(): event base cannot be nullptr");
+  }
+}
+
+int EventBaseBackend::eb_event_base_loop(int flags) {
+  return event_base_loop(evb_, flags);
+}
+
+int EventBaseBackend::eb_event_base_loopbreak() {
+  return event_base_loopbreak(evb_);
+}
+
+int EventBaseBackend::eb_event_add(
+    Event& event,
+    const struct timeval* timeout) {
+  return event_add(event.getEvent(), timeout);
+}
+
+int EventBaseBackend::eb_event_del(EventBaseBackendBase::Event& event) {
+  return event_del(event.getEvent());
+}
+
+EventBaseBackend::~EventBaseBackend() {
+  std::lock_guard<std::mutex> lock(libevent_mutex_);
+  event_base_free(evb_);
+}
+
+} // namespace
+
+namespace folly {
 /*
  * EventBase::FunctionRunner
  */
@@ -49,7 +138,7 @@ class EventBase::FunctionRunner
     // To have similar bejaviour to libevent1.4, tell the loop to break here.
     // Note that loop() may still continue to loop, but it will also check the
     // stop_ flag as well as runInLoop callbacks, etc.
-    event_base_loopbreak(getEventBase()->evb_);
+    getEventBase()->getBackend()->eb_event_base_loopbreak();
 
     if (!msg) {
       // terminateLoopSoon() sends a null message just to
@@ -59,15 +148,6 @@ class EventBase::FunctionRunner
     msg();
   }
 };
-
-// The interface used to libevent is not thread-safe.  Calls to
-// event_init() and event_base_free() directly modify an internal
-// global 'current_base', so a mutex is required to protect this.
-//
-// event_init() should only ever be called once.  Subsequent calls
-// should be made to event_base_new().  We can recognise that
-// event_init() has already been called by simply inspecting current_base.
-static std::mutex libevent_mutex_;
 
 /*
  * EventBase methods
@@ -91,39 +171,25 @@ EventBase::EventBase(bool enableTimeMeasurement)
       observer_(nullptr),
       observerSampleCount_(0),
       executionObserver_(nullptr) {
-  struct event ev;
-  {
-    std::lock_guard<std::mutex> lock(libevent_mutex_);
+  evb_ = getDefaultBackend();
 
-    // The value 'current_base' (libevent 1) or
-    // 'event_global_current_base_' (libevent 2) is filled in by event_set(),
-    // allowing examination of its value without an explicit reference here.
-    // If ev.ev_base is nullptr, then event_init() must be called, otherwise
-    // call event_base_new().
-    event_set(&ev, 0, 0, nullptr, nullptr);
-    if (!ev.ev_base) {
-      evb_ = event_init();
-    }
-  }
-
-  if (ev.ev_base) {
-    evb_ = event_base_new();
-  }
-
-  if (UNLIKELY(evb_ == nullptr)) {
-    LOG(ERROR) << "EventBase(): Failed to init event base.";
-    folly::throwSystemError("error in EventBase::EventBase()");
-  }
   VLOG(5) << "EventBase(): Created.";
   initNotificationQueue();
 }
 
 // takes ownership of the event_base
 EventBase::EventBase(event_base* evb, bool enableTimeMeasurement)
+    : EventBase(
+          std::make_unique<EventBaseBackend>(evb),
+          enableTimeMeasurement) {}
+
+// takes ownership of the backend
+EventBase::EventBase(
+    std::unique_ptr<EventBaseBackendBase>&& evb,
+    bool enableTimeMeasurement)
     : runOnceCallbacks_(nullptr),
       stop_(false),
       loopThread_(),
-      evb_(evb),
       queue_(nullptr),
       fnRunner_(nullptr),
       maxLatency_(0),
@@ -138,10 +204,7 @@ EventBase::EventBase(event_base* evb, bool enableTimeMeasurement)
       observer_(nullptr),
       observerSampleCount_(0),
       executionObserver_(nullptr) {
-  if (UNLIKELY(evb_ == nullptr)) {
-    LOG(ERROR) << "EventBase(): Pass nullptr as event base.";
-    throw std::invalid_argument("EventBase(): event base cannot be nullptr");
-  }
+  evb_ = evb ? std::move(evb) : getDefaultBackend();
   initNotificationQueue();
 }
 
@@ -164,10 +227,14 @@ EventBase::~EventBase() {
   }
 
   // Call all destruction callbacks, before we start cleaning up our state.
-  while (!onDestructionCallbacks_.empty()) {
-    LoopCallback* callback = &onDestructionCallbacks_.front();
-    onDestructionCallbacks_.pop_front();
-    callback->runLoopCallback();
+  while (!onDestructionCallbacks_.rlock()->empty()) {
+    OnDestructionCallback::List callbacks;
+    onDestructionCallbacks_.swap(callbacks);
+    while (!callbacks.empty()) {
+      auto& callback = callbacks.front();
+      callbacks.pop_front();
+      callback.runCallback();
+    }
   }
 
   clearCobTimeouts();
@@ -182,16 +249,17 @@ EventBase::~EventBase() {
 
   // Stop consumer before deleting NotificationQueue
   fnRunner_->stopConsuming();
-  {
-    std::lock_guard<std::mutex> lock(libevent_mutex_);
-    event_base_free(evb_);
-  }
+  evb_.reset();
 
   for (auto storage : localStorageToDtor_) {
     storage->onEventBaseDestruction(*this);
   }
 
   VLOG(5) << "EventBase(): Destroyed.";
+}
+
+std::unique_ptr<EventBaseBackendBase> EventBase::getDefaultBackend() {
+  return std::make_unique<EventBaseBackend>();
 }
 
 size_t EventBase::getNotificationQueueSize() const {
@@ -211,7 +279,7 @@ void EventBase::checkIsInEventBaseThread() const {
   // Using getThreadName(evbTid) instead of name_ will work also if
   // the thread name is set outside of EventBase (and name_ is empty).
   auto curTid = std::this_thread::get_id();
-  CHECK(evbTid == curTid)
+  CHECK_EQ(evbTid, curTid)
       << "This logic must be executed in the event base thread. "
       << "Event base thread name: \""
       << folly::getThreadName(evbTid).value_or("")
@@ -275,13 +343,16 @@ bool EventBase::loopOnce(int flags) {
 bool EventBase::loopBody(int flags, bool ignoreKeepAlive) {
   VLOG(5) << "EventBase(): Starting loop.";
 
-  DCHECK(!invokingLoop_)
-      << "Your code just tried to loop over an event base from inside another "
-      << "event base loop. Since libevent is not reentrant, this leads to "
-      << "undefined behavior in opt builds. Please fix immediately. For the "
-      << "common case of an inner function that needs to do some synchronous "
-      << "computation on an event-base, replace getEventBase() by a new, "
-      << "stack-allocated EvenBase.";
+  const char* message =
+      "Your code just tried to loop over an event base from inside another "
+      "event base loop. Since libevent is not reentrant, this leads to "
+      "undefined behavior in opt builds. Please fix immediately. For the "
+      "common case of an inner function that needs to do some synchronous "
+      "computation on an event-base, replace getEventBase() by a new, "
+      "stack-allocated EvenBase.";
+
+  LOG_IF(DFATAL, invokingLoop_) << message;
+
   invokingLoop_ = true;
   SCOPE_EXIT {
     invokingLoop_ = false;
@@ -298,7 +369,12 @@ bool EventBase::loopBody(int flags, bool ignoreKeepAlive) {
   std::chrono::microseconds busy;
   std::chrono::microseconds idle;
 
-  loopThread_.store(std::this_thread::get_id(), std::memory_order_release);
+  auto const prevLoopThread = loopThread_.exchange(
+      std::this_thread::get_id(), std::memory_order_relaxed);
+  CHECK_EQ(std::thread::id(), prevLoopThread)
+      << "Driving an EventBase in one thread (" << std::this_thread::get_id()
+      << ") while it is already being driven in another thread ("
+      << prevLoopThread << ") is forbidden.";
 
   if (!name_.empty()) {
     setThreadName(name_);
@@ -328,9 +404,9 @@ bool EventBase::loopBody(int flags, bool ignoreKeepAlive) {
     // nobody can add loop callbacks from within this thread if
     // we don't have to handle anything to start with...
     if (blocking && loopCallbacks_.empty()) {
-      res = event_base_loop(evb_, EVLOOP_ONCE);
+      res = evb_->eb_event_base_loop(EVLOOP_ONCE);
     } else {
-      res = event_base_loop(evb_, EVLOOP_ONCE | EVLOOP_NONBLOCK);
+      res = evb_->eb_event_base_loop(EVLOOP_ONCE | EVLOOP_NONBLOCK);
     }
 
     ranLoopCallbacks = runLoopCallbacks();
@@ -378,16 +454,18 @@ bool EventBase::loopBody(int flags, bool ignoreKeepAlive) {
       VLOG(11) << "EventBase " << this << " did not timeout";
     }
 
-    // If the event loop indicate that there were no more events, and
-    // we also didn't have any loop callbacks to run, there is nothing left to
-    // do.
-    if (res != 0 && !ranLoopCallbacks) {
+    // Event loop indicated that there were no more events (NotificationQueue
+    // was registered as an internal event and there were no other registered
+    // events).
+    if (res != 0) {
       // Since Notification Queue is marked 'internal' some events may not have
       // run.  Run them manually if so, and continue looping.
       //
       if (getNotificationQueueSize() > 0) {
         fnRunner_->handlerReady(0);
-      } else {
+      } else if (!ranLoopCallbacks) {
+        // If there were no more events and we also didn't have any loop
+        // callbacks to run, there is nothing left to do.
         break;
       }
     }
@@ -498,7 +576,7 @@ void EventBase::terminateLoopSoon() {
 
   // Call event_base_loopbreak() so that libevent will exit the next time
   // around the loop.
-  event_base_loopbreak(evb_);
+  evb_->eb_event_base_loopbreak();
 
   // If terminateLoopSoon() is called from another thread,
   // the EventBase thread might be stuck waiting for events.
@@ -539,10 +617,18 @@ void EventBase::runInLoop(Func cob, bool thisIteration) {
   }
 }
 
-void EventBase::runOnDestruction(LoopCallback* callback) {
-  std::lock_guard<std::mutex> lg(onDestructionCallbacksMutex_);
-  callback->cancelLoopCallback();
-  onDestructionCallbacks_.push_back(*callback);
+void EventBase::runOnDestruction(OnDestructionCallback& callback) {
+  callback.schedule(
+      [this](auto& cb) { onDestructionCallbacks_.wlock()->push_back(cb); },
+      [this](auto& cb) {
+        onDestructionCallbacks_.withWLock(
+            [&](auto& list) { list.erase(list.iterator_to(cb)); });
+      });
+}
+
+void EventBase::runOnDestruction(Func f) {
+  auto* callback = new FunctionOnDestructionCallback(std::move(f));
+  runOnDestruction(*callback);
 }
 
 void EventBase::runBeforeLoop(LoopCallback* callback) {
@@ -551,39 +637,45 @@ void EventBase::runBeforeLoop(LoopCallback* callback) {
   runBeforeLoopCallbacks_.push_back(*callback);
 }
 
-bool EventBase::runInEventBaseThread(Func fn) {
+void EventBase::runInEventBaseThread(Func fn) noexcept {
   // Send the message.
   // It will be received by the FunctionRunner in the EventBase's thread.
 
   // We try not to schedule nullptr callbacks
   if (!fn) {
-    LOG(ERROR) << "EventBase " << this
-               << ": Scheduling nullptr callbacks is not allowed";
-    return false;
+    DLOG(FATAL) << "EventBase " << this
+                << ": Scheduling nullptr callbacks is not allowed";
+    return;
   }
 
   // Short-circuit if we are already in our event base
   if (inRunningEventBaseThread()) {
     runInLoop(std::move(fn));
-    return true;
+    return;
   }
 
-  try {
-    queue_->putMessage(std::move(fn));
-  } catch (const std::exception& ex) {
-    LOG(ERROR) << "EventBase " << this << ": failed to schedule function "
-               << "for EventBase thread: " << ex.what();
-    return false;
-  }
-
-  return true;
+  queue_->putMessage(std::move(fn));
 }
 
-bool EventBase::runInEventBaseThreadAndWait(Func fn) {
+void EventBase::runInEventBaseThreadAlwaysEnqueue(Func fn) noexcept {
+  // Send the message.
+  // It will be received by the FunctionRunner in the EventBase's thread.
+
+  // We try not to schedule nullptr callbacks
+  if (!fn) {
+    LOG(DFATAL) << "EventBase " << this
+                << ": Scheduling nullptr callbacks is not allowed";
+    return;
+  }
+
+  queue_->putMessage(std::move(fn));
+}
+
+void EventBase::runInEventBaseThreadAndWait(Func fn) noexcept {
   if (inRunningEventBaseThread()) {
-    LOG(ERROR) << "EventBase " << this << ": Waiting in the event loop is not "
-               << "allowed";
-    return false;
+    LOG(DFATAL) << "EventBase " << this << ": Waiting in the event loop is not "
+                << "allowed";
+    return;
   }
 
   Baton<> ready;
@@ -596,16 +688,13 @@ bool EventBase::runInEventBaseThreadAndWait(Func fn) {
     copy(std::move(fn))();
   });
   ready.wait();
-
-  return true;
 }
 
-bool EventBase::runImmediatelyOrRunInEventBaseThreadAndWait(Func fn) {
+void EventBase::runImmediatelyOrRunInEventBaseThreadAndWait(Func fn) noexcept {
   if (isInEventBaseThread()) {
     fn();
-    return true;
   } else {
-    return runInEventBaseThreadAndWait(std::move(fn));
+    runInEventBaseThreadAndWait(std::move(fn));
   }
 }
 
@@ -692,20 +781,20 @@ bool EventBase::nothingHandledYet() const noexcept {
 }
 
 void EventBase::attachTimeoutManager(AsyncTimeout* obj, InternalEnum internal) {
-  struct event* ev = obj->getEvent();
-  assert(ev->ev_base == nullptr);
+  auto* ev = obj->getEvent();
+  assert(ev->eb_ev_base() == nullptr);
 
-  event_base_set(getLibeventBase(), ev);
+  ev->eb_event_base_set(this);
   if (internal == AsyncTimeout::InternalEnum::INTERNAL) {
     // Set the EVLIST_INTERNAL flag
-    event_ref_flags(ev) |= EVLIST_INTERNAL;
+    event_ref_flags(ev->getEvent()) |= EVLIST_INTERNAL;
   }
 }
 
 void EventBase::detachTimeoutManager(AsyncTimeout* obj) {
   cancelTimeout(obj);
-  struct event* ev = obj->getEvent();
-  ev->ev_base = nullptr;
+  auto* ev = obj->getEvent();
+  ev->eb_ev_base(nullptr);
 }
 
 bool EventBase::scheduleTimeout(
@@ -717,11 +806,11 @@ bool EventBase::scheduleTimeout(
   tv.tv_sec = long(timeout.count() / 1000LL);
   tv.tv_usec = long((timeout.count() % 1000LL) * 1000LL);
 
-  struct event* ev = obj->getEvent();
+  auto* ev = obj->getEvent();
 
-  DCHECK(ev->ev_base);
+  DCHECK(ev->eb_ev_base());
 
-  if (event_add(ev, &tv) < 0) {
+  if (ev->eb_event_add(&tv) < 0) {
     LOG(ERROR) << "EventBase: failed to schedule timeout: " << errnoStr(errno);
     return false;
   }
@@ -731,9 +820,9 @@ bool EventBase::scheduleTimeout(
 
 void EventBase::cancelTimeout(AsyncTimeout* obj) {
   dcheckIsInEventBaseThread();
-  struct event* ev = obj->getEvent();
-  if (EventUtil::isEventRegistered(ev)) {
-    event_del(ev);
+  auto* ev = obj->getEvent();
+  if (ev->isEventRegistered()) {
+    ev->eb_event_del();
   }
 }
 
@@ -758,6 +847,10 @@ void EventBase::scheduleAt(Func&& fn, TimePoint const& timeout) {
       std::chrono::duration_cast<std::chrono::milliseconds>(duration));
 }
 
+event_base* EventBase::getLibeventBase() const {
+  return evb_ ? (evb_->getEventBase()) : nullptr;
+}
+
 const char* EventBase::getLibeventVersion() {
   return event_get_version();
 }
@@ -777,5 +870,49 @@ EventBase* EventBase::getEventBase() {
   return this;
 }
 
+EventBase::OnDestructionCallback::~OnDestructionCallback() {
+  if (*scheduled_.rlock()) {
+    LOG(FATAL)
+        << "OnDestructionCallback must be canceled if needed prior to destruction";
+  }
+}
+
+void EventBase::OnDestructionCallback::runCallback() noexcept {
+  scheduled_.withWLock([&](bool& scheduled) {
+    CHECK(scheduled);
+    scheduled = false;
+
+    // run can only be called by EventBase and VirtualEventBase, and it's called
+    // after the callback has been popped off the list.
+    eraser_ = nullptr;
+
+    // Note that the exclusive lock on shared state is held while the callback
+    // runs. This ensures concurrent callers to cancel() block until the
+    // callback finishes.
+    onEventBaseDestruction();
+  });
+}
+
+void EventBase::OnDestructionCallback::schedule(
+    FunctionRef<void(OnDestructionCallback&)> linker,
+    Function<void(OnDestructionCallback&)> eraser) {
+  eraser_ = std::move(eraser);
+  scheduled_.withWLock([](bool& scheduled) { scheduled = true; });
+  linker(*this);
+}
+
+bool EventBase::OnDestructionCallback::cancel() {
+  return scheduled_.withWLock([this](bool& scheduled) {
+    const bool wasScheduled = std::exchange(scheduled, false);
+    if (wasScheduled) {
+      auto eraser = std::move(eraser_);
+      CHECK(eraser);
+      eraser(*this);
+    }
+    return wasScheduled;
+  });
+}
+
 constexpr std::chrono::milliseconds EventBase::SmoothLoopTime::buffer_interval_;
+
 } // namespace folly

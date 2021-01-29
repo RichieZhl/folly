@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,9 +18,11 @@
 
 #include <atomic>
 #include <thread>
+#include <utility>
 
 #include <folly/executors/InlineExecutor.h>
 #include <folly/futures/detail/Core.h>
+#include <folly/lang/Pretty.h>
 
 namespace folly {
 
@@ -29,9 +31,13 @@ namespace detail {
 template <typename T>
 void coreDetachPromiseMaybeWithResult(Core<T>& core) {
   if (!core.hasResult()) {
-    core.setResult(Try<T>(exception_wrapper(BrokenPromise(typeid(T).name()))));
+    core.setResult(Try<T>(exception_wrapper(BrokenPromise(pretty_name<T>()))));
   }
   core.detachPromise();
+}
+template <typename T>
+void setTry(Promise<T>& p, Executor::KeepAlive<>&& ka, Try<T>&& t) {
+  p.setTry(std::move(ka), std::move(t));
 }
 } // namespace detail
 } // namespace futures
@@ -46,14 +52,14 @@ Promise<T>::Promise() : retrieved_(false), core_(Core::make()) {}
 
 template <class T>
 Promise<T>::Promise(Promise<T>&& other) noexcept
-    : retrieved_(exchange(other.retrieved_, false)),
-      core_(exchange(other.core_, nullptr)) {}
+    : retrieved_(std::exchange(other.retrieved_, false)),
+      core_(std::exchange(other.core_, nullptr)) {}
 
 template <class T>
 Promise<T>& Promise<T>::operator=(Promise<T>&& other) noexcept {
   detach();
-  retrieved_ = exchange(other.retrieved_, false);
-  core_ = exchange(other.core_, nullptr);
+  retrieved_ = std::exchange(other.retrieved_, false);
+  core_ = std::exchange(other.core_, nullptr);
   return *this;
 }
 
@@ -122,6 +128,12 @@ template <class T>
 void Promise<T>::setTry(Try<T>&& t) {
   throwIfFulfilled();
   core_->setResult(std::move(t));
+}
+
+template <class T>
+void Promise<T>::setTry(Executor::KeepAlive<>&& ka, Try<T>&& t) {
+  throwIfFulfilled();
+  core_->setResult(std::move(ka), std::move(t));
 }
 
 template <class T>

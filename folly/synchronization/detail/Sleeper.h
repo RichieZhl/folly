@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -42,9 +42,9 @@ class Sleeper {
   uint32_t spinCount;
 
  public:
-  Sleeper() : spinCount(0) {}
+  Sleeper() noexcept : spinCount(0) {}
 
-  static void sleep() {
+  static void sleep() noexcept {
     /*
      * Always sleep 0.5ms, assuming this will make the kernel put
      * us down for whatever its minimum timer resolution is (in
@@ -54,7 +54,7 @@ class Sleeper {
     nanosleep(&ts, nullptr);
   }
 
-  void wait() {
+  void wait() noexcept {
     if (spinCount < kMaxActiveSpin) {
       ++spinCount;
       asm_volatile_pause();

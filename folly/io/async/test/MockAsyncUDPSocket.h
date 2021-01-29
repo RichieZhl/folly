@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <folly/io/async/AsyncUDPSocket.h>
@@ -27,7 +28,7 @@ struct MockAsyncUDPSocket : public AsyncUDPSocket {
 
   MOCK_CONST_METHOD0(address, const SocketAddress&());
   MOCK_METHOD1(bind, void(const SocketAddress&));
-  MOCK_METHOD2(setFD, void(int, AsyncUDPSocket::FDOwnership));
+  MOCK_METHOD2(setFD, void(NetworkSocket, AsyncUDPSocket::FDOwnership));
   MOCK_METHOD2(
       write,
       ssize_t(const SocketAddress&, const std::unique_ptr<IOBuf>&));
@@ -43,7 +44,8 @@ struct MockAsyncUDPSocket : public AsyncUDPSocket {
   MOCK_METHOD1(resumeRead, void(ReadCallback*));
   MOCK_METHOD0(pauseRead, void());
   MOCK_METHOD0(close, void());
-  MOCK_CONST_METHOD0(getFD, int());
+  MOCK_METHOD0(setDFAndTurnOffPMTU, void());
+  MOCK_CONST_METHOD0(getNetworkSocket, NetworkSocket());
   MOCK_METHOD1(setReusePort, void(bool));
   MOCK_METHOD1(setReuseAddr, void(bool));
   MOCK_METHOD1(dontFragment, void(bool));
@@ -52,6 +54,7 @@ struct MockAsyncUDPSocket : public AsyncUDPSocket {
   MOCK_CONST_METHOD0(isBound, bool());
   MOCK_METHOD0(getGSO, int());
   MOCK_METHOD1(setGSO, bool(int));
+  MOCK_METHOD2(recvmsg, ssize_t(struct msghdr*, int));
 };
 
 } // namespace test

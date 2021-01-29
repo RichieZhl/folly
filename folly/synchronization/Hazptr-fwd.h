@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
+
+#include <folly/portability/GFlags.h>
 
 #include <atomic>
 #include <memory>
@@ -29,6 +32,8 @@
 #else
 #define FOLLY_HAZPTR_THR_LOCAL true
 #endif
+
+DECLARE_bool(folly_hazptr_use_executor);
 
 namespace folly {
 
@@ -53,6 +58,14 @@ class hazptr_obj;
 /** hazptr_obj_list */
 template <template <typename> class Atom = std::atomic>
 class hazptr_obj_list;
+
+/** hazptr_obj_batch */
+template <template <typename> class Atom = std::atomic>
+class hazptr_obj_batch;
+
+/** hazptr_obj_retired_list */
+template <template <typename> class Atom = std::atomic>
+class hazptr_obj_retired_list;
 
 /** hazptr_deleter */
 template <typename T, typename D>
@@ -122,6 +135,12 @@ class hazptr_domain;
 /** default_hazptr_domain */
 template <template <typename> class Atom = std::atomic>
 hazptr_domain<Atom>& default_hazptr_domain();
+
+/** hazptr_domain_push_list */
+template <template <typename> class Atom = std::atomic>
+void hazptr_domain_push_list(
+    hazptr_obj_list<Atom>& l,
+    hazptr_domain<Atom>& domain = default_hazptr_domain<Atom>()) noexcept;
 
 /** hazptr_domain_push_retired */
 template <template <typename> class Atom = std::atomic>

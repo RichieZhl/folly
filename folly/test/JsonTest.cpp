@@ -1,11 +1,11 @@
 /*
- * Copyright 2011-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,7 +23,9 @@
 
 using folly::dynamic;
 using folly::parseJson;
+using folly::parseJsonWithMetadata;
 using folly::toJson;
+using folly::json::parse_error;
 
 TEST(Json, Unicode) {
   auto val = parseJson(u8"\"I \u2665 UTF-8\"");
@@ -77,12 +79,12 @@ TEST(Json, Parse) {
   EXPECT_TRUE(std::isnan(parseJson("NaN").asDouble()));
 
   // case matters
-  EXPECT_THROW(parseJson("infinity"), std::runtime_error);
-  EXPECT_THROW(parseJson("inf"), std::runtime_error);
-  EXPECT_THROW(parseJson("Inf"), std::runtime_error);
-  EXPECT_THROW(parseJson("INF"), std::runtime_error);
-  EXPECT_THROW(parseJson("nan"), std::runtime_error);
-  EXPECT_THROW(parseJson("NAN"), std::runtime_error);
+  EXPECT_THROW(parseJson("infinity"), parse_error);
+  EXPECT_THROW(parseJson("inf"), parse_error);
+  EXPECT_THROW(parseJson("Inf"), parse_error);
+  EXPECT_THROW(parseJson("INF"), parse_error);
+  EXPECT_THROW(parseJson("nan"), parse_error);
+  EXPECT_THROW(parseJson("NAN"), parse_error);
 
   auto array = parseJson("[12,false, false  , null , [12e4,32, [], 12]]");
   EXPECT_EQ(array.size(), 5);
@@ -90,12 +92,11 @@ TEST(Json, Parse) {
     EXPECT_EQ(std::prev(array.end())->size(), 4);
   }
 
-  EXPECT_THROW(parseJson("\n[12,\n\nnotvalidjson"), std::runtime_error);
+  EXPECT_THROW(parseJson("\n[12,\n\nnotvalidjson"), parse_error);
 
-  EXPECT_THROW(parseJson("12e2e2"), std::runtime_error);
+  EXPECT_THROW(parseJson("12e2e2"), parse_error);
 
-  EXPECT_THROW(
-      parseJson("{\"foo\":12,\"bar\":42} \"something\""), std::runtime_error);
+  EXPECT_THROW(parseJson("{\"foo\":12,\"bar\":42} \"something\""), parse_error);
 
   // clang-format off
   dynamic value = dynamic::object
@@ -122,6 +123,225 @@ TEST(Json, Parse) {
   EXPECT_EQ(something, expected);
 }
 
+TEST(Json, TestLineNumbers) {
+  // Simple object
+  folly::json::metadata_map map;
+  dynamic val = parseJsonWithMetadata("\n\n{\n\n\"value\":40}", &map);
+  EXPECT_TRUE(val.isObject());
+  auto ov = val.get_ptr("value");
+  EXPECT_TRUE(ov != nullptr);
+  auto it = map.find(ov);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 4);
+  EXPECT_EQ(it->second.value_range.begin.line, 4);
+
+  // check with find() API too
+  auto dv = val.find("value");
+  it = map.find(&dv->second);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 4);
+  EXPECT_EQ(it->second.value_range.begin.line, 4);
+
+  map.clear();
+
+  // One line apart
+  val = parseJsonWithMetadata(
+      "{\"old_value\":40,\n\"changed\":true,\n\"opened\":1.5}", &map);
+
+  EXPECT_TRUE(val.isObject());
+  auto i1 = val.get_ptr("old_value");
+  EXPECT_TRUE(i1 != nullptr);
+  it = map.find(i1);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 0);
+  EXPECT_EQ(it->second.value_range.begin.line, 0);
+  EXPECT_EQ(i1->asInt(), 40);
+
+  auto i2 = val.get_ptr("changed");
+  EXPECT_TRUE(i2 != nullptr);
+  it = map.find(i2);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 1);
+  EXPECT_EQ(it->second.value_range.begin.line, 1);
+  EXPECT_EQ(i2->asBool(), true);
+
+  auto i3 = val.get_ptr("opened");
+  EXPECT_TRUE(i3 != nullptr);
+  it = map.find(i3);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 2);
+  EXPECT_EQ(it->second.value_range.begin.line, 2);
+  EXPECT_EQ(i3->asDouble(), 1.5);
+  map.clear();
+
+  // Multiple lines apart
+  val = parseJsonWithMetadata(
+      "\n{\n\"a\":40,\n\"b\":1.45,\n"
+      "\n\n\"c\":false,\n\n\n\n\n\"d\":\"dval\"\n\n}",
+      &map);
+
+  EXPECT_TRUE(val.isObject());
+
+  i1 = val.get_ptr("a");
+  EXPECT_TRUE(i1 != nullptr);
+  it = map.find(i1);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 2);
+  EXPECT_EQ(it->second.value_range.begin.line, 2);
+  EXPECT_EQ(i1->asInt(), 40);
+
+  i2 = val.get_ptr("b");
+  EXPECT_TRUE(i2 != nullptr);
+  it = map.find(i2);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 3);
+  EXPECT_EQ(it->second.value_range.begin.line, 3);
+  EXPECT_EQ(i2->asDouble(), 1.45);
+
+  i3 = val.get_ptr("c");
+  EXPECT_TRUE(i3 != nullptr);
+  it = map.find(i3);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 6);
+  EXPECT_EQ(it->second.value_range.begin.line, 6);
+  EXPECT_EQ(i3->asBool(), false);
+
+  auto i4 = val.get_ptr("d");
+  EXPECT_TRUE(i4 != nullptr);
+  it = map.find(i4);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 11);
+  EXPECT_EQ(it->second.value_range.begin.line, 11);
+  EXPECT_EQ(i4->asString(), "dval");
+  map.clear();
+
+  // All in the same line
+  val = parseJsonWithMetadata("{\"x\":40,\"y\":true,\"z\":3.33}", &map);
+  EXPECT_TRUE(val.isObject());
+
+  i1 = val.get_ptr("x");
+  EXPECT_TRUE(i1 != nullptr);
+  it = map.find(i1);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 0);
+  EXPECT_EQ(it->second.value_range.begin.line, 0);
+  EXPECT_EQ(i1->asInt(), 40);
+
+  i2 = val.get_ptr("y");
+  EXPECT_TRUE(i2 != nullptr);
+  it = map.find(i2);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 0);
+  EXPECT_EQ(it->second.value_range.begin.line, 0);
+  EXPECT_EQ(i2->asBool(), true);
+
+  i3 = val.get_ptr("z");
+  EXPECT_TRUE(i3 != nullptr);
+  it = map.find(i3);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 0);
+  EXPECT_EQ(it->second.value_range.begin.line, 0);
+  map.clear();
+
+  // Key and value in different numbers
+  val =
+      parseJsonWithMetadata("{\"x\":\n70,\"y\":\n\n80,\n\"z\":\n\n\n33}", &map);
+  EXPECT_TRUE(val.isObject());
+
+  i1 = val.get_ptr("x");
+  EXPECT_TRUE(i1 != nullptr);
+  it = map.find(i1);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 0);
+  EXPECT_EQ(it->second.value_range.begin.line, 1);
+  EXPECT_EQ(i1->asInt(), 70);
+
+  i2 = val.get_ptr("y");
+  EXPECT_TRUE(i2 != nullptr);
+  it = map.find(i2);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 1);
+  EXPECT_EQ(it->second.value_range.begin.line, 3);
+  EXPECT_EQ(i2->asInt(), 80);
+
+  i3 = val.get_ptr("z");
+  EXPECT_TRUE(i3 != nullptr);
+  it = map.find(i3);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 4);
+  EXPECT_EQ(it->second.value_range.begin.line, 7);
+  EXPECT_EQ(i3->asInt(), 33);
+  map.clear();
+
+  // With Arrays
+  val = parseJsonWithMetadata(
+      "{\"x\":\n[10, 20],\n\"y\":\n\n[80,\n90,\n100]}", &map);
+  EXPECT_TRUE(val.isObject());
+
+  i1 = val.get_ptr("x");
+  EXPECT_TRUE(i1 != nullptr);
+  it = map.find(i1);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 0);
+  EXPECT_EQ(it->second.value_range.begin.line, 1);
+
+  int i = 1;
+  for (auto arr_it = i1->begin(); arr_it != i1->end(); arr_it++, i++) {
+    auto arr_it_md = map.find(&*arr_it);
+    EXPECT_TRUE(arr_it_md != map.end());
+    EXPECT_EQ(arr_it_md->second.value_range.begin.line, 1);
+    EXPECT_EQ(arr_it->asInt(), 10 * i);
+  }
+
+  i2 = val.get_ptr("y");
+  EXPECT_TRUE(i2 != nullptr);
+  it = map.find(i2);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 2);
+  EXPECT_EQ(it->second.value_range.begin.line, 4);
+
+  i = 8;
+  int ln = 4;
+  for (auto arr_it = i2->begin(); arr_it != i2->end(); arr_it++, i++, ln++) {
+    auto arr_it_md = map.find(&*arr_it);
+    EXPECT_TRUE(arr_it_md != map.end());
+    EXPECT_EQ(arr_it_md->second.value_range.begin.line, ln);
+    EXPECT_EQ(arr_it->asInt(), 10 * i);
+  }
+  map.clear();
+
+  // With nested objects
+  val = parseJsonWithMetadata(
+      "{\"a1\":{\n\"a2\":{\n\"a3\":{\n\"a4\":4}}}}", &map);
+  EXPECT_TRUE(val.isObject());
+  i1 = val.get_ptr("a1");
+  EXPECT_TRUE(i1 != nullptr);
+  it = map.find(i1);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 0);
+  EXPECT_EQ(it->second.value_range.begin.line, 0);
+  i2 = i1->get_ptr("a2");
+  EXPECT_TRUE(i2 != nullptr);
+  it = map.find(i2);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 1);
+  EXPECT_EQ(it->second.value_range.begin.line, 1);
+  i3 = i2->get_ptr("a3");
+  EXPECT_TRUE(i3 != nullptr);
+  it = map.find(i3);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 2);
+  EXPECT_EQ(it->second.value_range.begin.line, 2);
+  i4 = i3->get_ptr("a4");
+  EXPECT_TRUE(i4 != nullptr);
+  it = map.find(i4);
+  EXPECT_TRUE(it != map.end());
+  EXPECT_EQ(it->second.key_range.begin.line, 3);
+  EXPECT_EQ(it->second.value_range.begin.line, 3);
+  EXPECT_EQ(i4->asInt(), 4);
+  map.clear();
+}
+
 TEST(Json, ParseTrailingComma) {
   folly::json::serialization_opts on, off;
   on.allow_trailing_comma = true;
@@ -133,7 +353,7 @@ TEST(Json, ParseTrailingComma) {
   EXPECT_EQ(arr, parseJson("[1, 2, ]", on));
   EXPECT_EQ(arr, parseJson("[1, 2 , ]", on));
   EXPECT_EQ(arr, parseJson("[1, 2 ,]", on));
-  EXPECT_THROW(parseJson("[1, 2,]", off), std::runtime_error);
+  EXPECT_THROW(parseJson("[1, 2,]", off), parse_error);
 
   dynamic obj = dynamic::object("a", 1);
   EXPECT_EQ(obj, parseJson("{\"a\": 1}", on));
@@ -141,7 +361,7 @@ TEST(Json, ParseTrailingComma) {
   EXPECT_EQ(obj, parseJson("{\"a\": 1, }", on));
   EXPECT_EQ(obj, parseJson("{\"a\": 1 , }", on));
   EXPECT_EQ(obj, parseJson("{\"a\": 1 ,}", on));
-  EXPECT_THROW(parseJson("{\"a\":1,}", off), std::runtime_error);
+  EXPECT_THROW(parseJson("{\"a\":1,}", off), parse_error);
 }
 
 TEST(Json, BoolConversion) {
@@ -169,7 +389,7 @@ TEST(Json, Produce) {
 
   // We're not allowed to have non-string keys in json.
   EXPECT_THROW(
-      toJson(dynamic::object("abc", "xyz")(42.33, "asd")), std::runtime_error);
+      toJson(dynamic::object("abc", "xyz")(42.33, "asd")), parse_error);
 
   // Check Infinity/Nan
   folly::json::serialization_opts opts;
@@ -384,7 +604,7 @@ TEST(Json, ParseNonStringKeys) {
   // check that we don't allow non-string keys as this violates the
   // strict JSON spec (though it is emitted by the output of
   // folly::dynamic with operator <<).
-  EXPECT_THROW(parseJson("{1:[]}"), std::runtime_error);
+  EXPECT_THROW(parseJson("{1:[]}"), parse_error);
 
   // check that we can parse colloquial JSON if the option is set
   folly::json::serialization_opts opts;
@@ -493,14 +713,14 @@ TEST(Json, ParseNumbersAsStrings) {
   EXPECT_EQ("-Infinity", parse("-Infinity"));
   EXPECT_EQ("NaN", parse("NaN"));
 
-  EXPECT_THROW(parse("ThisIsWrong"), std::runtime_error);
-  EXPECT_THROW(parse("34-2"), std::runtime_error);
-  EXPECT_THROW(parse(""), std::runtime_error);
-  EXPECT_THROW(parse("-"), std::runtime_error);
-  EXPECT_THROW(parse("34-e2"), std::runtime_error);
-  EXPECT_THROW(parse("34e2.4"), std::runtime_error);
-  EXPECT_THROW(parse("infinity"), std::runtime_error);
-  EXPECT_THROW(parse("nan"), std::runtime_error);
+  EXPECT_THROW(parse("ThisIsWrong"), parse_error);
+  EXPECT_THROW(parse("34-2"), parse_error);
+  EXPECT_THROW(parse(""), parse_error);
+  EXPECT_THROW(parse("-"), parse_error);
+  EXPECT_THROW(parse("34-e2"), parse_error);
+  EXPECT_THROW(parse("34e2.4"), parse_error);
+  EXPECT_THROW(parse("infinity"), parse_error);
+  EXPECT_THROW(parse("nan"), parse_error);
 }
 
 TEST(Json, SortKeys) {
@@ -528,6 +748,28 @@ TEST(Json, SortKeys) {
           dynamic::array("heh"),
           nullptr));
   // clang-format on
+
+  // dynamic object uses F14NodeMap which may randomize the table iteration
+  // order; consequently, we must force the table iteration order to be
+  // different from sorted order so that we can deterministically test sorting
+  // below
+  auto get_top_keys = [&] {
+    std::vector<std::string> top_keys;
+    for (auto const& key : value.keys()) {
+      top_keys.push_back(key.asString());
+    }
+    return top_keys;
+  };
+  std::vector<std::string> sorted_top_keys = get_top_keys();
+  std::sort(sorted_top_keys.begin(), sorted_top_keys.end());
+  while (get_top_keys() == sorted_top_keys) {
+    for (size_t i = 0; i < 64; ++i) {
+      value.insert(folly::to<std::string>("fake-", i), i);
+    }
+    for (size_t i = 0; i < 64; ++i) {
+      value.erase(folly::to<std::string>("fake-", i));
+    }
+  }
 
   std::string sorted_keys =
       R"({"a":[{"a":"b","c":"d"},12.5,"Yo Dawg",["heh"],null],)"

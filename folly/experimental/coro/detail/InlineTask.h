@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <folly/ScopeGuard.h>
@@ -228,6 +229,41 @@ inline InlineTask<void> InlineTaskPromise<void>::get_return_object() noexcept {
   return InlineTask<void>{std::experimental::coroutine_handle<
       InlineTaskPromise<void>>::from_promise(*this)};
 }
+
+/// InlineTaskDetached is a coroutine-return type where the coroutine is
+/// launched in the current execution context when it is created and the
+/// task's continuation is launched inline in the execution context that the
+/// task completed on.
+///
+/// This task type is primarily intended as a building block for certain
+/// coroutine operators. It is not intended for general use in application
+/// code or in library interfaces exposed to library code as it can easily be
+/// abused to accidentally run logic on the wrong execution context.
+///
+/// For this reason, the InlineTaskDetached type has been placed inside the
+/// folly::coro::detail namespace to discourage general usage.
+struct InlineTaskDetached {
+  class promise_type {
+   public:
+    InlineTaskDetached get_return_object() {
+      return {};
+    }
+
+    std::experimental::suspend_never initial_suspend() {
+      return {};
+    }
+
+    std::experimental::suspend_never final_suspend() {
+      return {};
+    }
+
+    void return_void() {}
+
+    [[noreturn]] void unhandled_exception() {
+      std::terminate();
+    }
+  };
+};
 
 } // namespace detail
 } // namespace coro

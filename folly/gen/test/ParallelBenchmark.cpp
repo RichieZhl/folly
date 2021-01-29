@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -38,6 +38,7 @@ size_t fib(int n) {
   return n <= 1 ? 1 : fib(n - 1) + fib(n - 2);
 }
 
+namespace {
 static auto isPrimeSlow = [](int n) {
   if (n < 2) {
     return false;
@@ -87,6 +88,7 @@ auto medium = from(v) | take(1 << 14);
 auto large = from(v) | take(1 << 18);
 auto huge = from(v);
 auto chunks = chunked(v);
+} // namespace
 
 BENCH_GEN(small | map(factorsSlow) | sum);
 BENCH_GEN_REL(small | parallel(map(factorsSlow)) | sum);

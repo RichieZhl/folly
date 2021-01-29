@@ -1,11 +1,11 @@
 /*
- * Copyright 2018-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <algorithm>
@@ -391,7 +392,7 @@ class RelaxedConcurrentPriorityQueue {
     uint32_t size = 1 << (tmp_btm + 1);
     MoundElement* new_level = new MoundElement[size]; // MM
     levels_[tmp_btm + 1] = new_level;
-    bottom_.store(tmp_btm + 1, std::memory_order_acq_rel);
+    bottom_.store(tmp_btm + 1, std::memory_order_release);
     guard_.store(0, std::memory_order_release);
   }
 
@@ -880,7 +881,7 @@ class RelaxedConcurrentPriorityQueue {
       head = head->next;
     }
     if (num > 0) {
-      top_loc_.store(num - 1, std::memory_order_acq_rel);
+      top_loc_.store(num - 1, std::memory_order_release);
     }
     setTreeNode(pos, head);
     return rsize - num;

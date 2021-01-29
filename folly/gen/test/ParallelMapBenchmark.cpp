@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -33,7 +33,7 @@ DEFINE_int32(
 
 constexpr int kFib = 35; // unit of work
 size_t fib(int n) {
-  return n <= 1 ? 1 : fib(n - 1) * fib(n - 2);
+  return n <= 1 ? 1 : fib(n - 1) + fib(n - 2);
 }
 
 BENCHMARK(FibSumMap, n) {

@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -86,9 +86,15 @@ void FatalSignalCallbackRegistry::run() {
   }
 }
 
-// Leak it so we don't have to worry about destruction order
-FatalSignalCallbackRegistry* gFatalSignalCallbackRegistry =
-    new FatalSignalCallbackRegistry;
+std::atomic<FatalSignalCallbackRegistry*> gFatalSignalCallbackRegistry{};
+
+FatalSignalCallbackRegistry* getFatalSignalCallbackRegistry() {
+  // Leak it so we don't have to worry about destruction order
+  static FatalSignalCallbackRegistry* fatalSignalCallbackRegistry =
+      new FatalSignalCallbackRegistry();
+
+  return fatalSignalCallbackRegistry;
+}
 
 struct {
   int number;
@@ -359,7 +365,7 @@ void dumpSignalInfo(int signum, siginfo_t* siginfo) {
   printDec(syscall(__NR_gettid));
 
   // Kernel-sourced signals don't give us useful info for pid/uid.
-  if (siginfo->si_code != SI_KERNEL) {
+  if (siginfo->si_code <= 0) {
     print(") (maybe from PID ");
     printDec(siginfo->si_pid);
     print(", UID ");
@@ -368,9 +374,17 @@ void dumpSignalInfo(int signum, siginfo_t* siginfo) {
 
   auto reason = signal_reason(signum, siginfo->si_code);
 
+  print(") (code: ");
+  // If we can't find a reason code make a best effort to print the (int) code.
   if (reason != nullptr) {
-    print(") (code: ");
     print(reason);
+  } else {
+    if (siginfo->si_code < 0) {
+      print("-");
+      printDec(-siginfo->si_code);
+    } else {
+      printDec(siginfo->si_code);
+    }
   }
 
   print("), stack trace: ***\n");
@@ -417,7 +431,10 @@ void innerSignalHandler(int signum, siginfo_t* info, void* /* uctx */) {
   gStackTracePrinter->printStackTrace(true); // with symbolization
 
   // Run user callbacks
-  gFatalSignalCallbackRegistry->run();
+  auto callbacks = gFatalSignalCallbackRegistry.load(std::memory_order_acquire);
+  if (callbacks) {
+    callbacks->run();
+  }
 }
 
 void signalHandler(int signum, siginfo_t* info, void* uctx) {
@@ -436,11 +453,11 @@ void signalHandler(int signum, siginfo_t* info, void* uctx) {
 } // namespace
 
 void addFatalSignalCallback(SignalCallback cb) {
-  gFatalSignalCallbackRegistry->add(cb);
+  getFatalSignalCallbackRegistry()->add(cb);
 }
 
 void installFatalSignalCallbacks() {
-  gFatalSignalCallbackRegistry->markInstalled();
+  getFatalSignalCallbackRegistry()->markInstalled();
 }
 
 namespace {
@@ -470,6 +487,11 @@ void installFatalSignalHandler() {
     // Already done.
     return;
   }
+
+  // make sure gFatalSignalCallbackRegistry is created before we
+  // install the fatal signal handler
+  gFatalSignalCallbackRegistry.store(
+      getFatalSignalCallbackRegistry(), std::memory_order_release);
 
   // If a small sigaltstack is enabled (ex. Rust stdlib might use sigaltstack
   // to set a small stack), the default SafeStackTracePrinter would likely

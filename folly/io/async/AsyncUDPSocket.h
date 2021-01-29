@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,6 +25,8 @@
 #include <folly/io/async/AsyncSocketException.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/io/async/EventHandler.h>
+#include <folly/net/NetOps.h>
+#include <folly/net/NetworkSocket.h>
 
 namespace folly {
 
@@ -56,6 +58,24 @@ class AsyncUDPSocket : public EventHandler {
         const folly::SocketAddress& client,
         size_t len,
         bool truncated) noexcept = 0;
+
+    /**
+     * Notifies when data is available. This is only invoked when
+     * shouldNotifyOnly() returns true.
+     */
+    virtual void onNotifyDataAvailable() noexcept {}
+
+    /**
+     * Returns whether or not the read callback should only notify
+     * but not call getReadBuffer.
+     * If shouldNotifyOnly() returns true, AsyncUDPSocket will invoke
+     * onNotifyDataAvailable() instead of getReadBuffer().
+     * If shouldNotifyOnly() returns false, AsyncUDPSocket will invoke
+     * getReadBuffer() and onDataAvailable().
+     */
+    virtual bool shouldOnlyNotify() {
+      return false;
+    }
 
     /**
      * Invoked when there is an error reading from the socket.
@@ -108,7 +128,7 @@ class AsyncUDPSocket : public EventHandler {
    * Returns the address server is listening on
    */
   virtual const folly::SocketAddress& address() const {
-    CHECK_NE(-1, fd_) << "Server not yet bound to an address";
+    CHECK_NE(NetworkSocket(), fd_) << "Server not yet bound to an address";
     return localAddress_;
   }
 
@@ -126,7 +146,7 @@ class AsyncUDPSocket : public EventHandler {
    * FDOwnership::SHARED. In case FD is shared, it will not be `close`d in
    * destructor.
    */
-  virtual void setFD(int fd, FDOwnership ownership);
+  virtual void setFD(NetworkSocket fd, FDOwnership ownership);
 
   /**
    * Send the data in buffer to destination. Returns the return code from
@@ -135,6 +155,17 @@ class AsyncUDPSocket : public EventHandler {
   virtual ssize_t write(
       const folly::SocketAddress& address,
       const std::unique_ptr<folly::IOBuf>& buf);
+
+  /**
+   * Send the data in buffers to destination. Returns the return code from
+   * ::sendmmsg.
+   * bufs is an array of std::unique_ptr<folly::IOBuf>
+   * of size num
+   */
+  virtual int writem(
+      const folly::SocketAddress& address,
+      const std::unique_ptr<folly::IOBuf>* bufs,
+      size_t count);
 
   /**
    * Send the data in buffer to destination. Returns the return code from
@@ -156,13 +187,15 @@ class AsyncUDPSocket : public EventHandler {
   virtual ssize_t writev(
       const folly::SocketAddress& address,
       const struct iovec* vec,
-      size_t veclen,
+      size_t iovec_len,
       int gso);
 
   virtual ssize_t writev(
       const folly::SocketAddress& address,
       const struct iovec* vec,
-      size_t veclen);
+      size_t iovec_len);
+
+  virtual ssize_t recvmsg(struct msghdr* msg, int flags);
 
   /**
    * Start reading datagrams
@@ -182,8 +215,8 @@ class AsyncUDPSocket : public EventHandler {
   /**
    * Get internal FD used by this socket
    */
-  virtual int getFD() const {
-    CHECK_NE(-1, fd_) << "Need to bind before getting FD out";
+  virtual NetworkSocket getNetworkSocket() const {
+    CHECK_NE(NetworkSocket(), fd_) << "Need to bind before getting FD out";
     return fd_;
   }
 
@@ -195,7 +228,7 @@ class AsyncUDPSocket : public EventHandler {
   }
 
   /**
-   * Set SO_REUSEADDR flag on the socket. Default is ON.
+   * Set SO_REUSEADDR flag on the socket. Default is OFF.
    */
   virtual void setReuseAddr(bool reuseAddr) {
     reuseAddr_ = reuseAddr;
@@ -240,6 +273,16 @@ class AsyncUDPSocket : public EventHandler {
   virtual void dontFragment(bool df);
 
   /**
+   * Set Dont-Fragment (DF) but ignore Path MTU.
+   *
+   * On Linux, this sets  IP(V6)_MTU_DISCOVER to IP(V6)_PMTUDISC_PROBE.
+   * This essentially sets DF but ignores Path MTU for this socket.
+   * This may be desirable for apps that has its own PMTU Discovery mechanism.
+   * See http://man7.org/linux/man-pages/man7/ip.7.html for more info.
+   */
+  virtual void setDFAndTurnOffPMTU();
+
+  /**
    * Callback for receiving errors on the UDP sockets
    */
   virtual void setErrMessageCallback(ErrMessageCallback* errMessageCallback);
@@ -265,7 +308,11 @@ class AsyncUDPSocket : public EventHandler {
   virtual int connect(const folly::SocketAddress& address);
 
   virtual bool isBound() const {
-    return fd_ != -1;
+    return fd_ != NetworkSocket();
+  }
+
+  virtual bool isReading() const {
+    return readCallback_ != nullptr;
   }
 
   virtual void detachEventBase();
@@ -278,10 +325,36 @@ class AsyncUDPSocket : public EventHandler {
 
   bool setGSO(int val);
 
+  void setTrafficClass(int tclass);
+
  protected:
-  virtual ssize_t sendmsg(int socket, const struct msghdr* message, int flags) {
-    return ::sendmsg(socket, message, flags);
+  virtual ssize_t
+  sendmsg(NetworkSocket socket, const struct msghdr* message, int flags) {
+    return netops::sendmsg(socket, message, flags);
   }
+
+  virtual int sendmmsg(
+      NetworkSocket socket,
+      struct mmsghdr* msgvec,
+      unsigned int vlen,
+      int flags) {
+    return netops::sendmmsg(socket, msgvec, vlen, flags);
+  }
+
+  void fillMsgVec(
+      sockaddr_storage* addr,
+      socklen_t addr_len,
+      const std::unique_ptr<folly::IOBuf>* bufs,
+      size_t count,
+      struct mmsghdr* msgvec,
+      struct iovec* iov,
+      size_t iov_count);
+
+  virtual int writeImpl(
+      const folly::SocketAddress& address,
+      const std::unique_ptr<folly::IOBuf>* bufs,
+      size_t count,
+      struct mmsghdr* msgvec);
 
   size_t handleErrMessages() noexcept;
 
@@ -303,13 +376,17 @@ class AsyncUDPSocket : public EventHandler {
   EventBase* eventBase_;
   folly::SocketAddress localAddress_;
 
-  int fd_;
+  NetworkSocket fd_;
   FDOwnership ownership_;
 
   // Temp space to receive client address
   folly::SocketAddress clientAddress_;
 
-  bool reuseAddr_{true};
+  // If the socket is connected.
+  folly::SocketAddress connectedAddress_;
+  bool connected_{false};
+
+  bool reuseAddr_{false};
   bool reusePort_{false};
   int rcvBuf_{0};
   int sndBuf_{0};

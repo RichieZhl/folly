@@ -1,11 +1,11 @@
 /*
- * Copyright 2012-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,6 +16,7 @@
 
 #include <folly/memory/Arena.h>
 #include <folly/Memory.h>
+#include <folly/portability/GFlags.h>
 #include <folly/portability/GTest.h>
 
 #include <set>
@@ -155,6 +156,16 @@ TEST(Arena, SizeLimit) {
   void* a = arena.allocate(sizeof(size_t));
   EXPECT_TRUE(a != nullptr);
   EXPECT_THROW(arena.allocate(maxSize + 1), std::bad_alloc);
+}
+
+TEST(Arena, ExtremeSize) {
+  static const size_t requestedBlockSize = sizeof(size_t);
+
+  SysArena arena(requestedBlockSize);
+
+  void* a = arena.allocate(sizeof(size_t));
+  EXPECT_TRUE(a != nullptr);
+  EXPECT_THROW(arena.allocate(SIZE_MAX - 2), std::bad_alloc);
 }
 
 int main(int argc, char* argv[]) {

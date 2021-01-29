@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -53,10 +53,21 @@ SSLContext::SSLContext(SSLVersion version) {
       opt = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 |
           SSL_OP_NO_TLSv1_1;
       break;
+    case SSLv2:
     default:
       // do nothing
       break;
   }
+
+    // Disable TLS 1.3 by default, for now, if this version of OpenSSL
+    // supports it. There are some semantic differences (e.g. assumptions
+    // on getSession() returning a resumable session, SSL_CTX_set_ciphersuites,
+    // etc.)
+    //
+#if FOLLY_OPENSSL_HAS_TLS13
+  opt |= SSL_OP_NO_TLSv1_3;
+#endif
+
   int newOpt = SSL_CTX_set_options(ctx_, opt);
   DCHECK((newOpt & opt) == opt);
 
@@ -91,7 +102,7 @@ void SSLContext::ciphers(const std::string& ciphers) {
 
 void SSLContext::setClientECCurvesList(
     const std::vector<std::string>& ecCurves) {
-  if (ecCurves.size() == 0) {
+  if (ecCurves.empty()) {
     return;
   }
 #if OPENSSL_VERSION_NUMBER >= 0x1000200fL
@@ -130,6 +141,12 @@ void SSLContext::setServerECCurve(const std::string& curveName) {
 #else
   throw std::runtime_error("Elliptic curve encryption not allowed");
 #endif
+}
+
+SSLContext::SSLContext(SSL_CTX* ctx) : ctx_(ctx) {
+  if (SSL_CTX_up_ref(ctx) == 0) {
+    throw std::runtime_error("Failed to increment SSL_CTX refcount");
+  }
 }
 
 void SSLContext::setX509VerifyParam(
@@ -175,7 +192,7 @@ int SSLContext::getVerificationMode(
     case SSLVerifyPeerEnum::NO_VERIFY:
       mode = SSL_VERIFY_NONE;
       break;
-
+    case SSLVerifyPeerEnum::USE_CTX:
     default:
       break;
   }
@@ -248,6 +265,25 @@ void SSLContext::loadCertificateFromBufferPEM(folly::StringPiece cert) {
   if (SSL_CTX_use_certificate(ctx_, x509.get()) == 0) {
     throw std::runtime_error("SSL_CTX_use_certificate: " + getErrors());
   }
+
+  // Any further X509 PEM blocks are treated as additional certificates in
+  // the certificate chain.
+  constexpr size_t kMaxCertChain = 64;
+
+  for (size_t i = 0; i < kMaxCertChain; i++) {
+    x509.reset(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
+    if (x509 == nullptr) {
+      ERR_clear_error();
+      return;
+    }
+
+    if (SSL_CTX_add1_chain_cert(ctx_, x509.get()) == 0) {
+      throw std::runtime_error("SSL_CTX_add0_chain_cert: " + getErrors());
+    }
+  }
+
+  throw std::runtime_error(
+      "loadCertificateFromBufferPEM(): Too many certificates in chain");
 }
 
 void SSLContext::loadPrivateKey(const char* path, const char* format) {
@@ -362,7 +398,7 @@ void SSLContext::addClientHelloCallback(const ClientHelloCallback& cb) {
 }
 
 int SSLContext::baseServerNameOpenSSLCallback(SSL* ssl, int* al, void* data) {
-  SSLContext* context = (SSLContext*)data;
+  auto context = (SSLContext*)data;
 
   if (context == nullptr) {
     return SSL_TLSEXT_ERR_NOACK;
@@ -407,7 +443,7 @@ int SSLContext::alpnSelectCallback(
     const unsigned char* in,
     unsigned int inlen,
     void* data) {
-  SSLContext* context = (SSLContext*)data;
+  auto context = (SSLContext*)data;
   CHECK(context);
   if (context->advertisedNextProtocols_.empty()) {
     *out = nullptr;
@@ -436,12 +472,12 @@ bool SSLContext::setAdvertisedNextProtocols(
 bool SSLContext::setRandomizedAdvertisedNextProtocols(
     const std::list<NextProtocolsItem>& items) {
   unsetNextProtocols();
-  if (items.size() == 0) {
+  if (items.empty()) {
     return false;
   }
   int total_weight = 0;
   for (const auto& item : items) {
-    if (item.protocols.size() == 0) {
+    if (item.protocols.empty()) {
       continue;
     }
     AdvertisedNextProtocolsItem advertised_item;
@@ -461,7 +497,7 @@ bool SSLContext::setRandomizedAdvertisedNextProtocols(
     }
     unsigned char* dst = advertised_item.protocols;
     for (auto& proto : item.protocols) {
-      uint8_t protoLength = uint8_t(proto.length());
+      auto protoLength = uint8_t(proto.length());
       *dst++ = (unsigned char)protoLength;
       memcpy(dst, proto.data(), protoLength);
       dst += protoLength;
@@ -565,7 +601,7 @@ bool SSLContext::matchName(const char* host, const char* pattern, int size) {
 }
 
 int SSLContext::passwordCallback(char* password, int size, int, void* data) {
-  SSLContext* context = (SSLContext*)data;
+  auto context = (SSLContext*)data;
   if (context == nullptr || context->passwordCollector() == nullptr) {
     return 0;
   }

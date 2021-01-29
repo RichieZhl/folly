@@ -1,11 +1,11 @@
 /*
- * Copyright 2014-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <iostream>
 
 #include <folly/io/async/AsyncServerSocket.h>
@@ -28,13 +29,14 @@ namespace folly {
 
 TEST(AsyncSocketTest, getSockOpt) {
   EventBase evb;
-  std::shared_ptr<AsyncSocket> socket = AsyncSocket::newSocket(&evb, 0);
+  std::shared_ptr<AsyncSocket> socket =
+      AsyncSocket::newSocket(&evb, NetworkSocket(0));
 
   int val;
   socklen_t len;
 
-  int expectedRc =
-      getsockopt(socket->getFd(), SOL_SOCKET, SO_REUSEADDR, &val, &len);
+  int expectedRc = netops::getsockopt(
+      socket->getNetworkSocket(), SOL_SOCKET, SO_REUSEADDR, &val, &len);
   int actualRc = socket->getSockOpt(SOL_SOCKET, SO_REUSEADDR, &val, &len);
 
   EXPECT_EQ(expectedRc, actualRc);
@@ -95,14 +97,15 @@ TEST(AsyncSocketTest, tosReflect) {
   auto server1 = AsyncServerSocket::newSocket(&base);
   server1->bind(0);
   server1->listen(10);
-  int fd = server1->getSocket();
+  auto fd = server1->getNetworkSocket();
 
   // Verify if tos reflect is disabled by default
   // and the TCP_SAVE_SYN setting is not enabled
   EXPECT_FALSE(server1->getTosReflect());
   int value;
   socklen_t valueLength = sizeof(value);
-  int rc = getsockopt(fd, IPPROTO_TCP, TCP_SAVE_SYN, &value, &valueLength);
+  int rc =
+      netops::getsockopt(fd, IPPROTO_TCP, TCP_SAVE_SYN, &value, &valueLength);
   ASSERT_EQ(rc, 0);
   ASSERT_EQ(value, 0);
 
@@ -112,7 +115,7 @@ TEST(AsyncSocketTest, tosReflect) {
   // Verify if tos reflect is enabled now
   // and the TCP_SAVE_SYN setting is also enabled
   EXPECT_TRUE(server1->getTosReflect());
-  rc = getsockopt(fd, IPPROTO_TCP, TCP_SAVE_SYN, &value, &valueLength);
+  rc = netops::getsockopt(fd, IPPROTO_TCP, TCP_SAVE_SYN, &value, &valueLength);
   ASSERT_EQ(rc, 0);
   ASSERT_EQ(value, 1);
 }

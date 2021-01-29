@@ -1,11 +1,11 @@
 /*
- * Copyright 2016-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,7 +22,7 @@ using namespace folly;
 
 TEST(SelfDestruct, then) {
   auto* p = new Promise<int>();
-  auto future = p->getFuture().then([p](int x) {
+  auto future = p->getFuture().thenValue([p](int x) {
     delete p;
     return x + 1;
   });
@@ -52,8 +52,8 @@ class ThrowingExecutor : public folly::Executor {
 TEST(SelfDestruct, throwingExecutor) {
   ThrowingExecutor executor;
   auto* p = new Promise<int>();
-  auto future =
-      p->getFuture().via(&executor).onError([p](ThrowingExecutorError const&) {
+  auto future = p->getFuture().via(&executor).thenError(
+      folly::tag_t<ThrowingExecutorError>{}, [p](auto const&) {
         delete p;
         return 456;
       });
@@ -71,7 +71,9 @@ TEST(SelfDestruct, throwingInlineExecutor) {
                       delete p;
                       throw ThrowingExecutorError("callback throws");
                     })
-                    .onError([](ThrowingExecutorError const&) { return 456; });
+                    .thenError(
+                        folly::tag_t<ThrowingExecutorError>{},
+                        [](auto const&) { return 456; });
   p->setValue(123);
   EXPECT_EQ(456, std::move(future).get());
 }
