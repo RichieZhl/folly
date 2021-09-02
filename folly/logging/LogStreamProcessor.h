@@ -16,15 +16,18 @@
 
 #pragma once
 
-#include <fmt/core.h>
+#include <cstdlib>
+
+#include <fmt/fmt/core.h>
 #include <folly/CPortability.h>
 #include <folly/Conv.h>
+#include <folly/ExceptionString.h>
 #include <folly/Portability.h>
+#include <folly/lang/Exception.h>
 #include <folly/logging/LogCategory.h>
 #include <folly/logging/LogMessage.h>
 #include <folly/logging/LogStream.h>
 #include <folly/logging/ObjectToString.h>
-#include <cstdlib>
 
 namespace folly {
 
@@ -211,12 +214,7 @@ class LogStreamProcessor {
       folly::StringPiece functionName,
       AppendType) noexcept
       : LogStreamProcessor(
-            fileScopeInfo,
-            level,
-            filename,
-            lineNumber,
-            functionName,
-            APPEND) {}
+            fileScopeInfo, level, filename, lineNumber, functionName, APPEND) {}
   template <typename... Args>
   LogStreamProcessor(
       XlogFileScopeInfo* fileScopeInfo,
@@ -274,9 +272,7 @@ class LogStreamProcessor {
    */
   void operator&(LogStream&& stream) noexcept;
 
-  std::ostream& stream() noexcept {
-    return stream_;
-  }
+  std::ostream& stream() noexcept { return stream_; }
 
   void logNow() noexcept;
 
@@ -321,44 +317,44 @@ class LogStreamProcessor {
    */
   template <typename... Args>
   FOLLY_NOINLINE std::string createLogString(Args&&... args) noexcept {
-    try {
-      return folly::to<std::string>(std::forward<Args>(args)...);
-    } catch (const std::exception& ex) {
-      // This most likely means there was some error converting the arguments
-      // to strings.  Handle the exception here, rather than letting it
-      // propagate up, since callers generally do not expect log statements to
-      // throw.
-      //
-      // Just log an error message letting indicating that something went wrong
-      // formatting the log message.
-      return folly::to<std::string>(
-          "error constructing log message: ", ex.what());
-    }
+    return folly::catch_exception<const std::exception&>(
+        [&] { return folly::to<std::string>(std::forward<Args>(args)...); },
+        [&](const std::exception& ex) {
+          // This most likely means there was some error converting the
+          // arguments to strings.  Handle the exception here, rather than
+          // letting it propagate up, since callers generally do not expect log
+          // statements to throw.
+          //
+          // Just log an error message letting indicating that something went
+          // wrong formatting the log message.
+          return folly::to<std::string>(
+              "error constructing log message: ", exceptionStr(ex));
+        });
   }
 
   FOLLY_NOINLINE std::string vformatLogString(
-      folly::StringPiece fmt,
-      fmt::format_args args,
-      bool& failed) noexcept {
-    try {
-      return fmt::vformat(fmt::string_view(fmt.data(), fmt.size()), args);
-    } catch (const std::exception& ex) {
-      // This most likely means that the caller had a bug in their format
-      // string/arguments.  Handle the exception here, rather than letting it
-      // propagate up, since callers generally do not expect log statements to
-      // throw.
-      //
-      // Log the format string and as much of the arguments as we can convert,
-      // to aid debugging.
-      failed = true;
-      std::string result;
-      result.append("error formatting log message: ");
-      result.append(ex.what());
-      result.append("; format string: \"");
-      result.append(fmt.data(), fmt.size());
-      result.append("\", arguments: ");
-      return result;
-    }
+      folly::StringPiece fmt, fmt::format_args args, bool& failed) noexcept {
+    return folly::catch_exception<const std::exception&>(
+        [&] {
+          return fmt::vformat(fmt::string_view(fmt.data(), fmt.size()), args);
+        },
+        [&](const std::exception& ex) {
+          // This most likely means that the caller had a bug in their format
+          // string/arguments.  Handle the exception here, rather than letting
+          // it propagate up, since callers generally do not expect log
+          // statements to throw.
+          //
+          // Log the format string and as much of the arguments as we can
+          // convert, to aid debugging.
+          failed = true;
+          std::string result;
+          result.append("error formatting log message: ");
+          result.append(exceptionStr(ex).c_str());
+          result.append("; format string: \"");
+          result.append(fmt.data(), fmt.size());
+          result.append("\", arguments: ");
+          return result;
+        });
   }
 
   /**
@@ -371,8 +367,7 @@ class LogStreamProcessor {
    */
   template <typename... Args>
   FOLLY_NOINLINE std::string formatLogString(
-      folly::StringPiece fmt,
-      const Args&... args) noexcept {
+      folly::StringPiece fmt, const Args&... args) noexcept {
     bool failed = false;
     std::string result =
         vformatLogString(fmt, fmt::make_format_args(args...), failed);
@@ -431,7 +426,7 @@ class LogStreamVoidify {
    * eliminated by the compiler, leaving only the LogStreamProcessor destructor
    * invocation, which cannot be eliminated.
    */
-  void operator&(std::ostream&)noexcept {}
+  void operator&(std::ostream&) noexcept {}
 };
 
 template <>

@@ -82,7 +82,7 @@ ByteRange DataHolder::data(size_t size) const {
 }
 
 uint64_t hashIOBuf(const IOBuf* buf) {
-  uint64_t h = folly::hash::FNV_64_HASH_START;
+  uint64_t h = folly::hash::fnv64_hash_start;
   for (auto& range : *buf) {
     h = folly::hash::fnv64_buf(range.data(), range.size(), h);
   }
@@ -300,7 +300,7 @@ TEST_P(CompressionTest, ConstantDataString) {
   runSimpleStringTest(constantDataHolder);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     CompressionTest,
     CompressionTest,
     testing::Combine(
@@ -357,7 +357,7 @@ TEST_P(CompressionVarintTest, ConstantData) {
   runSimpleTest(constantDataHolder);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     CompressionVarintTest,
     CompressionVarintTest,
     testing::Combine(
@@ -381,9 +381,7 @@ TEST(LZMATest, UncompressBadVarint) {
 
 class CompressionCorruptionTest : public testing::TestWithParam<CodecType> {
  protected:
-  void SetUp() override {
-    codec_ = getCodec(GetParam());
-  }
+  void SetUp() override { codec_ = getCodec(GetParam()); }
 
   void runSimpleTest(const DataHolder& dh);
 
@@ -445,7 +443,7 @@ TEST_P(CompressionCorruptionTest, ConstantData) {
   runSimpleTest(constantDataHolder);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     CompressionCorruptionTest,
     CompressionCorruptionTest,
     testing::ValuesIn(
@@ -466,13 +464,9 @@ static bool codecHasFlush(CodecType type) {
 
 class StreamingUnitTest : public testing::TestWithParam<CodecType> {
  protected:
-  void SetUp() override {
-    codec_ = getStreamCodec(GetParam());
-  }
+  void SetUp() override { codec_ = getStreamCodec(GetParam()); }
 
-  bool hasFlush() const {
-    return codecHasFlush(GetParam());
-  }
+  bool hasFlush() const { return codecHasFlush(GetParam()); }
 
   std::unique_ptr<StreamCodec> codec_;
 };
@@ -633,8 +627,8 @@ TEST_P(StreamingUnitTest, noForwardProgress) {
       codec_->resetStream();
     }
     auto input = inBuffer->coalesce();
-    MutableByteRange output = {outBuffer->writableTail(),
-                               outBuffer->tailroom()};
+    MutableByteRange output = {
+        outBuffer->writableTail(), outBuffer->tailroom()};
     // Compress some data to avoid empty data special casing
     while (!input.empty()) {
       codec_->compressStream(input, output);
@@ -785,7 +779,7 @@ TEST_P(StreamingUnitTest, stateTransitions) {
   codec_->compress(inBuffer.get());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StreamingUnitTest,
     StreamingUnitTest,
     testing::ValuesIn(availableStreamCodecs()));
@@ -793,9 +787,7 @@ INSTANTIATE_TEST_CASE_P(
 class StreamingCompressionTest
     : public testing::TestWithParam<std::tuple<int, int, CodecType>> {
  protected:
-  bool hasFlush() const {
-    return codecHasFlush(std::get<2>(GetParam()));
-  }
+  bool hasFlush() const { return codecHasFlush(std::get<2>(GetParam())); }
 
   void SetUp() override {
     auto const tup = GetParam();
@@ -997,7 +989,7 @@ TEST_P(StreamingCompressionTest, testFlush) {
   runFlushTest(randomDataHolder);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StreamingCompressionTest,
     StreamingCompressionTest,
     testing::Combine(
@@ -1137,9 +1129,7 @@ class CustomCodec : public Codec {
         codec_(getCodec(type)) {}
 
  private:
-  std::vector<std::string> validPrefixes() const override {
-    return {prefix_};
-  }
+  std::vector<std::string> validPrefixes() const override { return {prefix_}; }
 
   uint64_t doMaxCompressedLength(uint64_t uncompressedLength) const override {
     return codec_->maxCompressedLength(uncompressedLength) + prefix_.size();
@@ -1161,8 +1151,7 @@ class CustomCodec : public Codec {
   }
 
   std::unique_ptr<IOBuf> doUncompress(
-      const IOBuf* data,
-      Optional<uint64_t> uncompressedLength) override {
+      const IOBuf* data, Optional<uint64_t> uncompressedLength) override {
     EXPECT_TRUE(canUncompress(data, uncompressedLength));
     auto clone = data->cloneCoalescedAsValue();
     clone.trimStart(prefix_.size());
@@ -1245,7 +1234,7 @@ TEST_P(AutomaticCodecTest, canUncompressOneBytes) {
   EXPECT_FALSE(auto_->canUncompress(&buf, folly::none));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AutomaticCodecTest,
     AutomaticCodecTest,
     testing::ValuesIn(availableCodecs()));
@@ -1256,8 +1245,7 @@ namespace {
 class ConstantCodec : public Codec {
  public:
   static std::unique_ptr<Codec> create(
-      std::string uncompressed,
-      CodecType type) {
+      std::string uncompressed, CodecType type) {
     return std::make_unique<ConstantCodec>(std::move(uncompressed), type);
   }
   explicit ConstantCodec(std::string uncompressed, CodecType type)
@@ -1272,8 +1260,8 @@ class ConstantCodec : public Codec {
     throw std::runtime_error("ConstantCodec error: compress() not supported.");
   }
 
-  std::unique_ptr<IOBuf> doUncompress(const IOBuf*, Optional<uint64_t>)
-      override {
+  std::unique_ptr<IOBuf> doUncompress(
+      const IOBuf*, Optional<uint64_t>) override {
     return IOBuf::copyBuffer(uncompressed_);
   }
 
@@ -1330,7 +1318,7 @@ TEST_P(TerminalCodecTest, terminalOverridesDefaults) {
   EXPECT_EQ(terminal->uncompress(compressed), "dummyString");
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     TerminalCodecTest,
     TerminalCodecTest,
     testing::ValuesIn(autoUncompressionCodecTypes));
@@ -1571,7 +1559,7 @@ TEST_P(ZlibOptionsTest, simpleRoundTripTest) {
   runSimpleRoundTripTest(randomDataHolder);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ZlibOptionsTest,
     ZlibOptionsTest,
     testing::Combine(
@@ -1583,11 +1571,7 @@ INSTANTIATE_TEST_CASE_P(
         testing::Values(9, 12, 15),
         testing::Values(1, 8, 9),
         testing::Values(
-            Z_DEFAULT_STRATEGY,
-            Z_FILTERED,
-            Z_HUFFMAN_ONLY,
-            Z_RLE,
-            Z_FIXED)));
+            Z_DEFAULT_STRATEGY, Z_FILTERED, Z_HUFFMAN_ONLY, Z_RLE, Z_FIXED)));
 
 #endif // FOLLY_HAVE_LIBZ
 

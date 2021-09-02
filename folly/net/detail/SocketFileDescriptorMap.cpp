@@ -145,4 +145,34 @@ int SocketFileDescriptorMap::socketToFd(SOCKET sock) noexcept {
 } // namespace detail
 } // namespace netops
 } // namespace folly
+
+#elif defined(__XROS__) || defined(__EMSCRIPTEN__)
+
+// Stub this out for now.
+#include <stdexcept>
+
+namespace folly {
+namespace netops {
+namespace detail {
+
+int SocketFileDescriptorMap::close(int fd) noexcept {
+  std::terminate();
+}
+
+int SocketFileDescriptorMap::close(void* sock) noexcept {
+  std::terminate();
+}
+
+void* SocketFileDescriptorMap::fdToSocket(int fd) noexcept {
+  std::terminate();
+}
+
+int SocketFileDescriptorMap::socketToFd(void* sock) noexcept {
+  std::terminate();
+}
+
+} // namespace detail
+} // namespace netops
+} // namespace folly
+
 #endif

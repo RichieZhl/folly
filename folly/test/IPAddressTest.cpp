@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+#include <folly/IPAddress.h>
+
 #include <sys/types.h>
 
 #include <string>
 
-#include <folly/Format.h>
-#include <folly/IPAddress.h>
+#include <fmt/fmt/core.h>
+
 #include <folly/MacAddress.h>
 #include <folly/String.h>
 #include <folly/container/BitIterator.h>
@@ -40,9 +42,7 @@ struct AddressData {
   uint8_t version;
 
   AddressData(
-      const std::string& address_,
-      const ByteVector& bytes_,
-      uint8_t version_)
+      const std::string& address_, const ByteVector& bytes_, uint8_t version_)
       : address(address_), bytes(bytes_), version(version_) {}
   AddressData(const std::string& address_, uint8_t version_)
       : address(address_), bytes(), version(version_) {}
@@ -79,21 +79,11 @@ struct AddressFlags {
   AddressFlags(const std::string& addr, uint8_t version_, uint8_t flags_)
       : address(addr), flags(flags_), version(version_) {}
 
-  bool isLoopback() const {
-    return (flags & IS_LOCAL);
-  }
-  bool isNonroutable() const {
-    return (flags & IS_NONROUTABLE);
-  }
-  bool isPrivate() const {
-    return (flags & IS_PRIVATE);
-  }
-  bool isZero() const {
-    return (flags & IS_ZERO);
-  }
-  bool isLinkLocal() const {
-    return (flags & IS_LINK_LOCAL);
-  }
+  bool isLoopback() const { return (flags & IS_LOCAL); }
+  bool isNonroutable() const { return (flags & IS_NONROUTABLE); }
+  bool isPrivate() const { return (flags & IS_PRIVATE); }
+  bool isZero() const { return (flags & IS_ZERO); }
+  bool isLinkLocal() const { return (flags & IS_LINK_LOCAL); }
   bool isLinkLocalBroadcast() const {
     return (flags & IS_LINK_LOCAL_BROADCAST);
   }
@@ -670,7 +660,7 @@ TEST(IPaddress, toInverseArpaName) {
   EXPECT_EQ("1.0.0.10.in-addr.arpa", addr_ipv4.toInverseArpaName());
   IPAddressV6 addr_ipv6("2620:0000:1cfe:face:b00c:0000:0000:0003");
   EXPECT_EQ(
-      sformat(
+      fmt::format(
           "{}.ip6.arpa",
           "3.0.0.0.0.0.0.0.0.0.0.0.c.0.0.b.e.c.a.f.e.f.c.1.0.0.0.0.0.2.6.2"),
       addr_ipv6.toInverseArpaName());
@@ -682,7 +672,7 @@ TEST(IPaddress, fromInverseArpaName) {
       IPAddressV4::fromInverseArpaName("1.0.0.10.in-addr.arpa"));
   EXPECT_EQ(
       IPAddressV6("2620:0000:1cfe:face:b00c:0000:0000:0003"),
-      IPAddressV6::fromInverseArpaName(sformat(
+      IPAddressV6::fromInverseArpaName(fmt::format(
           "{}.ip6.arpa",
           "3.0.0.0.0.0.0.0.0.0.0.0.c.0.0.b.e.c.a.f.e.f.c.1.0.0.0.0.0.2.6.2")));
 }
@@ -1249,33 +1239,33 @@ TEST(IPAddress, StringFormat) {
 
 TEST(IPAddress, getMacAddressFromLinkLocal) {
   IPAddressV6 ip6("fe80::f652:14ff:fec5:74d8");
-  EXPECT_TRUE(ip6.getMacAddressFromLinkLocal().hasValue());
+  EXPECT_TRUE(ip6.getMacAddressFromLinkLocal().has_value());
   EXPECT_EQ("f4:52:14:c5:74:d8", ip6.getMacAddressFromLinkLocal()->toString());
 }
 
 TEST(IPAddress, getMacAddressFromLinkLocal_Negative) {
   IPAddressV6 no_link_local_ip6("2803:6082:a2:4447::1");
-  EXPECT_FALSE(no_link_local_ip6.getMacAddressFromLinkLocal().hasValue());
+  EXPECT_FALSE(no_link_local_ip6.getMacAddressFromLinkLocal().has_value());
   no_link_local_ip6 = IPAddressV6("fe80::f652:14ff:ccc5:74d8");
-  EXPECT_FALSE(no_link_local_ip6.getMacAddressFromLinkLocal().hasValue());
+  EXPECT_FALSE(no_link_local_ip6.getMacAddressFromLinkLocal().has_value());
   no_link_local_ip6 = IPAddressV6("fe80::f652:14ff:ffc5:74d8");
-  EXPECT_FALSE(no_link_local_ip6.getMacAddressFromLinkLocal().hasValue());
+  EXPECT_FALSE(no_link_local_ip6.getMacAddressFromLinkLocal().has_value());
   no_link_local_ip6 = IPAddressV6("fe81::f652:14ff:ffc5:74d8");
-  EXPECT_FALSE(no_link_local_ip6.getMacAddressFromLinkLocal().hasValue());
+  EXPECT_FALSE(no_link_local_ip6.getMacAddressFromLinkLocal().has_value());
 }
 
 TEST(IPAddress, getMacAddressFromEUI64) {
   IPAddressV6 ip6("2401:db00:3020:51dc:4a57:ddff:fe04:5643");
-  EXPECT_TRUE(ip6.getMacAddressFromEUI64().hasValue());
+  EXPECT_TRUE(ip6.getMacAddressFromEUI64().has_value());
   EXPECT_EQ("48:57:dd:04:56:43", ip6.getMacAddressFromEUI64()->toString());
   ip6 = IPAddressV6("fe80::4a57:ddff:fe04:5643");
-  EXPECT_TRUE(ip6.getMacAddressFromEUI64().hasValue());
+  EXPECT_TRUE(ip6.getMacAddressFromEUI64().has_value());
   EXPECT_EQ("48:57:dd:04:56:43", ip6.getMacAddressFromEUI64()->toString());
 }
 
 TEST(IPAddress, getMacAddressFromEUI64_Negative) {
   IPAddressV6 not_eui64_ip6("2401:db00:3020:51dc:face:0000:009a:0000");
-  EXPECT_FALSE(not_eui64_ip6.getMacAddressFromEUI64().hasValue());
+  EXPECT_FALSE(not_eui64_ip6.getMacAddressFromEUI64().has_value());
 }
 
 TEST(IPAddress, LongestCommonPrefix) {
@@ -1454,9 +1444,7 @@ static vector<AddressFlags> flagProvider = {
     AddressFlags("224.0.0.0", 4, IS_NONROUTABLE),
     // v4 link local broadcast
     AddressFlags(
-        "255.255.255.255",
-        4,
-        IS_NONROUTABLE | IS_LINK_LOCAL_BROADCAST),
+        "255.255.255.255", 4, IS_NONROUTABLE | IS_LINK_LOCAL_BROADCAST),
 
     // non routable v6
     AddressFlags("1999::1", 6, IS_NONROUTABLE),
@@ -1545,43 +1533,33 @@ static const vector<MaskBoundaryData> maskBoundaryProvider = {
     MaskBoundaryData("2620:0:1cfe:face:b00c::1", 48, "2620:0:1cfc::", false),
 };
 
-INSTANTIATE_TEST_CASE_P(
-    IPAddress,
-    IPAddressTest,
-    ::testing::ValuesIn(validAddressProvider));
-INSTANTIATE_TEST_CASE_P(
-    IPAddress,
-    IPAddressFlagTest,
-    ::testing::ValuesIn(flagProvider));
-INSTANTIATE_TEST_CASE_P(
-    IPAddress,
-    IPAddressMappedTest,
-    ::testing::ValuesIn(mapProvider));
-INSTANTIATE_TEST_CASE_P(
-    IPAddress,
-    IPAddressCtorTest,
-    ::testing::ValuesIn(invalidAddressProvider));
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
+    IPAddress, IPAddressTest, ::testing::ValuesIn(validAddressProvider));
+INSTANTIATE_TEST_SUITE_P(
+    IPAddress, IPAddressFlagTest, ::testing::ValuesIn(flagProvider));
+INSTANTIATE_TEST_SUITE_P(
+    IPAddress, IPAddressMappedTest, ::testing::ValuesIn(mapProvider));
+INSTANTIATE_TEST_SUITE_P(
+    IPAddress, IPAddressCtorTest, ::testing::ValuesIn(invalidAddressProvider));
+INSTANTIATE_TEST_SUITE_P(
     IPAddress,
     IPAddressCtorBinaryTest,
     ::testing::ValuesIn(invalidBinaryProvider));
-INSTANTIATE_TEST_CASE_P(
-    IPAddress,
-    IPAddressMaskTest,
-    ::testing::ValuesIn(masksProvider));
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
+    IPAddress, IPAddressMaskTest, ::testing::ValuesIn(masksProvider));
+INSTANTIATE_TEST_SUITE_P(
     IPAddress,
     IPAddressMaskBoundaryTest,
     ::testing::ValuesIn(maskBoundaryProvider));
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     IPAddress,
     IPAddressByteAccessorTest,
     ::testing::ValuesIn(validAddressProvider));
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     IPAddress,
     IPAddressBitAccessorTest,
     ::testing::ValuesIn(validAddressProvider));
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     IPAddress,
     TryFromStringTest,
     ::testing::ValuesIn(TryFromStringTest::ipInOutProvider()));

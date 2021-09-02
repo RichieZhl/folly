@@ -16,9 +16,8 @@
 
 #include <folly/io/async/AsyncSignalHandler.h>
 
-#include <folly/io/async/EventBase.h>
-
 #include <folly/Conv.h>
+#include <folly/io/async/EventBase.h>
 
 using std::make_pair;
 using std::pair;
@@ -32,7 +31,10 @@ AsyncSignalHandler::AsyncSignalHandler(EventBase* eventBase)
 AsyncSignalHandler::~AsyncSignalHandler() {
   // Unregister any outstanding events
   for (auto& signalEvent : signalEvents_) {
-    event_del(&signalEvent.second);
+    // isEventRegistered() may be false if the EventBase was destroyed before us
+    if (signalEvent.second->isEventRegistered()) {
+      signalEvent.second->eb_event_del();
+    }
   }
 }
 
@@ -49,23 +51,23 @@ void AsyncSignalHandler::detachEventBase() {
 }
 
 void AsyncSignalHandler::registerSignalHandler(int signum) {
-  pair<SignalEventMap::iterator, bool> ret =
-      signalEvents_.insert(make_pair(signum, event()));
+  pair<SignalEventMap::iterator, bool> ret = signalEvents_.insert(
+      make_pair(signum, std::make_unique<EventBaseEvent>()));
   if (!ret.second) {
     // This signal has already been registered
     throw std::runtime_error(
         folly::to<string>("handler already registered for signal ", signum));
   }
 
-  struct event* ev = &(ret.first->second);
+  EventBaseEvent* ev = ret.first->second.get();
   try {
-    signal_set(ev, signum, libeventCallback, this);
-    if (event_base_set(eventBase_->getLibeventBase(), ev) != 0) {
+    ev->eb_signal_set(signum, libeventCallback, this);
+    if (ev->eb_event_base_set(eventBase_) != 0) {
       throw std::runtime_error(folly::to<string>(
           "error initializing event handler for signal ", signum));
     }
 
-    if (event_add(ev, nullptr) != 0) {
+    if (ev->eb_event_add(nullptr) != 0) {
       throw std::runtime_error(
           folly::to<string>("error adding event handler for signal ", signum));
     }
@@ -84,14 +86,12 @@ void AsyncSignalHandler::unregisterSignalHandler(int signum) {
         ": signal not registered"));
   }
 
-  event_del(&it->second);
+  it->second->eb_event_del();
   signalEvents_.erase(it);
 }
 
 void AsyncSignalHandler::libeventCallback(
-    libevent_fd_t signum,
-    short /* events */,
-    void* arg) {
+    libevent_fd_t signum, short /* events */, void* arg) {
   auto handler = static_cast<AsyncSignalHandler*>(arg);
   handler->signalReceived(int(signum));
 }

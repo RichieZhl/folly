@@ -19,9 +19,6 @@
 #pragma once
 #define FOLLY_EXPERIMENTAL_SYMBOLIZER_ELF_H_
 
-#include <elf.h>
-#include <link.h> // For ElfW()
-
 #include <cstdio>
 #include <initializer_list>
 #include <stdexcept>
@@ -31,16 +28,28 @@
 #include <folly/Likely.h>
 #include <folly/Range.h>
 #include <folly/lang/SafeAssert.h>
+#include <folly/portability/Config.h>
+
+#if FOLLY_HAVE_ELF
+
+#include <elf.h>
+#include <link.h> // For ElfW()
 
 namespace folly {
 namespace symbolizer {
 
-using ElfAddr = ElfW(Addr);
-using ElfEhdr = ElfW(Ehdr);
-using ElfOff = ElfW(Off);
-using ElfPhdr = ElfW(Phdr);
-using ElfShdr = ElfW(Shdr);
-using ElfSym = ElfW(Sym);
+#if defined(ElfW)
+#define FOLLY_ELF_ELFW(name) ElfW(name)
+#elif defined(__FreeBSD__)
+#define FOLLY_ELF_ELFW(name) Elf_##name
+#endif
+
+using ElfAddr = FOLLY_ELF_ELFW(Addr);
+using ElfEhdr = FOLLY_ELF_ELFW(Ehdr);
+using ElfOff = FOLLY_ELF_ELFW(Off);
+using ElfPhdr = FOLLY_ELF_ELFW(Phdr);
+using ElfShdr = FOLLY_ELF_ELFW(Shdr);
+using ElfSym = FOLLY_ELF_ELFW(Sym);
 
 /**
  * ELF file parser.
@@ -55,9 +64,7 @@ class ElfFile {
    public:
     constexpr Options() noexcept {}
 
-    constexpr bool writable() const noexcept {
-      return writable_;
-    }
+    constexpr bool writable() const noexcept { return writable_; }
 
     constexpr Options& writable(bool const value) noexcept {
       writable_ = value;
@@ -93,13 +100,11 @@ class ElfFile {
   };
   // Open the ELF file. Does not throw on error.
   OpenResult openNoThrow(
-      const char* name,
-      Options const& options = Options()) noexcept;
+      const char* name, Options const& options = Options()) noexcept;
 
   // Like openNoThrow, but follow .gnu_debuglink if present
   OpenResult openAndFollow(
-      const char* name,
-      Options const& options = Options()) noexcept;
+      const char* name, Options const& options = Options()) noexcept;
 
   // Open the ELF file. Throws on error.
   void open(const char* name, Options const& options = Options());
@@ -110,17 +115,13 @@ class ElfFile {
   ElfFile& operator=(ElfFile&& other) noexcept;
 
   /** Retrieve the ELF header */
-  const ElfEhdr& elfHeader() const noexcept {
-    return at<ElfEhdr>(0);
-  }
+  const ElfEhdr& elfHeader() const noexcept { return at<ElfEhdr>(0); }
 
   /**
    * Get the base address, the address where the file should be loaded if
    * no relocations happened.
    */
-  uintptr_t getBaseAddress() const noexcept {
-    return baseAddress_;
-  }
+  uintptr_t getBaseAddress() const noexcept { return baseAddress_; }
 
   /** Find a section given its name */
   const ElfShdr* getSectionByName(const char* name) const noexcept;
@@ -135,8 +136,8 @@ class ElfFile {
   folly::StringPiece getSectionBody(const ElfShdr& section) const noexcept;
 
   /** Retrieve a string from a string table section */
-  const char* getString(const ElfShdr& stringTable, size_t offset) const
-      noexcept;
+  const char* getString(
+      const ElfShdr& stringTable, size_t offset) const noexcept;
 
   /**
    * Iterate over all strings in a string table section for as long as
@@ -180,8 +181,8 @@ class ElfFile {
    */
   template <class Fn>
   const ElfShdr* iterateSectionsWithTypes(
-      std::initializer_list<uint32_t> types,
-      Fn fn) const noexcept(is_nothrow_invocable_v<Fn, ElfShdr const&>);
+      std::initializer_list<uint32_t> types, Fn fn) const
+      noexcept(is_nothrow_invocable_v<Fn, ElfShdr const&>);
 
   /**
    * Iterate over all symbols witin a given section.
@@ -193,8 +194,8 @@ class ElfFile {
   const ElfSym* iterateSymbols(const ElfShdr& section, Fn fn) const
       noexcept(is_nothrow_invocable_v<Fn, ElfSym const&>);
   template <class Fn>
-  const ElfSym*
-  iterateSymbolsWithType(const ElfShdr& section, uint32_t type, Fn fn) const
+  const ElfSym* iterateSymbolsWithType(
+      const ElfShdr& section, uint32_t type, Fn fn) const
       noexcept(is_nothrow_invocable_v<Fn, ElfSym const&>);
   template <class Fn>
   const ElfSym* iterateSymbolsWithTypes(
@@ -271,20 +272,16 @@ class ElfFile {
   template <class T>
   const T& at(ElfOff offset) const noexcept {
     static_assert(std::is_pod<T>::value, "non-pod");
-    if (offset + sizeof(T) > length_) {
-      char msg[kFilepathMaxLen + 128];
-      snprintf(
-          msg,
-          sizeof(msg),
-          "Offset (%zu + %zu) is not contained within our mmapped"
-          " file (%s) of length %zu",
-          offset,
-          sizeof(T),
-          filepath_,
-          length_);
-      FOLLY_SAFE_CHECK(offset + sizeof(T) <= length_, msg);
-    }
-
+    FOLLY_SAFE_CHECK(
+        offset + sizeof(T) <= length_,
+        "Offset (",
+        static_cast<size_t>(offset),
+        " + ",
+        sizeof(T),
+        ") is not contained within our mapped file (",
+        filepath_,
+        ") of length ",
+        length_);
     return *reinterpret_cast<T*>(file_ + offset);
   }
 
@@ -324,3 +321,5 @@ class ElfFile {
 } // namespace folly
 
 #include <folly/experimental/symbolizer/Elf-inl.h>
+
+#endif // FOLLY_HAVE_ELF

@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
-#include <folly/Portability.h>
-
-#if FOLLY_HAS_COROUTINES
-
 #include <folly/experimental/coro/Baton.h>
 
+#include <folly/experimental/coro/Coroutine.h>
+#include <folly/synchronization/AtomicUtil.h>
+
 #include <cassert>
+#include <utility>
+
+#if FOLLY_HAS_COROUTINES
 
 using namespace folly::coro;
 
@@ -55,8 +57,12 @@ bool Baton::waitImpl(WaitOperation* awaiter) const noexcept {
       return false;
     }
     awaiter->next_ = static_cast<WaitOperation*>(oldValue);
-  } while (!state_.compare_exchange_weak(
-      oldValue, awaiter, std::memory_order_release, std::memory_order_acquire));
+  } while (!folly::atomic_compare_exchange_weak_explicit(
+      &state_,
+      &oldValue,
+      static_cast<void*>(awaiter),
+      std::memory_order_release,
+      std::memory_order_acquire));
   return true;
 }
 

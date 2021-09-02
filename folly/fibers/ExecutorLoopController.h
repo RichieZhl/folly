@@ -19,8 +19,9 @@
 #include <memory>
 
 #include <folly/Executor.h>
+#include <folly/fibers/ExecutorBasedLoopController.h>
 #include <folly/fibers/FiberManagerInternal.h>
-#include <folly/fibers/LoopController.h>
+#include <folly/futures/Future.h>
 
 namespace folly {
 namespace fibers {
@@ -36,8 +37,7 @@ class ExecutorTimeoutManager : public TimeoutManager {
   ExecutorTimeoutManager& operator=(const ExecutorTimeoutManager&) = delete;
 
   void attachTimeoutManager(
-      AsyncTimeout* /* unused */,
-      InternalEnum /* unused */) final {}
+      AsyncTimeout* /* unused */, InternalEnum /* unused */) final {}
 
   void detachTimeoutManager(AsyncTimeout* /* unused */) final {
     throw std::logic_error(
@@ -72,14 +72,12 @@ class ExecutorTimeoutManager : public TimeoutManager {
 /**
  * A fiber loop controller that works for arbitrary folly::Executor
  */
-class ExecutorLoopController : public fibers::LoopController {
+class ExecutorLoopController : public fibers::ExecutorBasedLoopController {
  public:
   explicit ExecutorLoopController(folly::Executor* executor);
   ~ExecutorLoopController() override;
 
-  folly::Executor* executor() const {
-    return executor_;
-  }
+  folly::Executor* executor() const override { return executor_; }
 
  private:
   folly::Executor* executor_;
@@ -88,11 +86,57 @@ class ExecutorLoopController : public fibers::LoopController {
   ExecutorTimeoutManager timeoutManager_;
   HHWheelTimer::UniquePtr timer_;
 
+  class LocalCallbackControlBlock {
+   public:
+    struct DeleteOrCancel {
+      void operator()(LocalCallbackControlBlock* controlBlock) {
+        if (controlBlock->scheduled_) {
+          controlBlock->cancelled_ = true;
+        } else {
+          delete controlBlock;
+        }
+      }
+    };
+    using Ptr = std::unique_ptr<LocalCallbackControlBlock, DeleteOrCancel>;
+
+    struct GuardDeleter {
+      void operator()(LocalCallbackControlBlock* controlBlock) {
+        DCHECK(controlBlock->scheduled_);
+        controlBlock->scheduled_ = false;
+        if (controlBlock->cancelled_) {
+          delete controlBlock;
+        }
+      }
+    };
+    using Guard = std::unique_ptr<LocalCallbackControlBlock, GuardDeleter>;
+
+    static Ptr create() { return Ptr(new LocalCallbackControlBlock()); }
+
+    Guard trySchedule() {
+      if (scheduled_) {
+        return {};
+      }
+      scheduled_ = true;
+      return Guard(this);
+    }
+
+    bool isCancelled() const { return cancelled_; }
+
+   private:
+    LocalCallbackControlBlock() {}
+
+    bool cancelled_{false};
+    bool scheduled_{false};
+  };
+  LocalCallbackControlBlock::Ptr localCallbackControlBlock_{
+      LocalCallbackControlBlock::create()};
+
   void setFiberManager(fibers::FiberManager* fm) override;
   void schedule() override;
   void runLoop() override;
+  void runEagerFiber(Fiber*) override;
   void scheduleThreadSafe() override;
-  HHWheelTimer& timer() override;
+  HHWheelTimer* timer() override;
 
   friend class fibers::FiberManager;
 };

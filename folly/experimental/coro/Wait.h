@@ -16,8 +16,11 @@
 
 #pragma once
 
-#include <experimental/coroutine>
 #include <future>
+
+#include <folly/experimental/coro/Coroutine.h>
+
+#if FOLLY_HAS_COROUTINES
 
 namespace folly {
 namespace coro {
@@ -26,21 +29,21 @@ class Wait {
  public:
   class promise_type {
    public:
-    Wait get_return_object() {
-      return Wait(promise_.get_future());
+    static void* operator new(std::size_t size) {
+      return ::folly_coro_async_malloc(size);
     }
 
-    std::experimental::suspend_never initial_suspend() {
-      return {};
+    void operator delete(void* ptr, std::size_t size) {
+      ::folly_coro_async_malloc(ptr, size);
     }
 
-    std::experimental::suspend_never final_suspend() {
-      return {};
-    }
+    Wait get_return_object() { return Wait(promise_.get_future()); }
 
-    void return_void() {
-      promise_.set_value();
-    }
+    suspend_never initial_suspend() noexcept { return {}; }
+
+    suspend_never final_suspend() noexcept { return {}; }
+
+    void return_void() { promise_.set_value(); }
 
     void unhandled_exception() {
       promise_.set_exception(std::current_exception());
@@ -54,9 +57,7 @@ class Wait {
 
   Wait(Wait&&) = default;
 
-  void detach() {
-    future_ = {};
-  }
+  void detach() { future_ = {}; }
 
   ~Wait() {
     if (future_.valid()) {
@@ -69,3 +70,5 @@ class Wait {
 };
 } // namespace coro
 } // namespace folly
+
+#endif // FOLLY_HAS_COROUTINES

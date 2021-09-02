@@ -23,7 +23,6 @@
 #include <folly/lang/SafeAssert.h>
 #include <folly/logging/LogName.h>
 
-using std::shared_ptr;
 using std::string;
 
 namespace folly {
@@ -65,9 +64,7 @@ std::string dynamicTypename(const dynamic& value) {
  * Throws a LogConfigParseError on other errors.
  */
 bool parseJsonLevel(
-    const dynamic& value,
-    StringPiece categoryName,
-    LogLevel& result) {
+    const dynamic& value, StringPiece categoryName, LogLevel& result) {
   if (value.isString()) {
     auto levelString = value.asString();
     try {
@@ -99,8 +96,7 @@ bool parseJsonLevel(
 }
 
 LogCategoryConfig parseJsonCategoryConfig(
-    const dynamic& value,
-    StringPiece categoryName) {
+    const dynamic& value, StringPiece categoryName) {
   LogCategoryConfig config;
 
   // If the input is not an object, allow it to be
@@ -182,8 +178,7 @@ LogCategoryConfig parseJsonCategoryConfig(
 }
 
 LogHandlerConfig parseJsonHandlerConfig(
-    const dynamic& value,
-    StringPiece handlerName) {
+    const dynamic& value, StringPiece handlerName) {
   if (!value.isObject()) {
     throw LogConfigParseError{to<string>(
         "unexpected data type for configuration of handler \"",
@@ -354,9 +349,7 @@ LogConfig::CategoryConfigMap parseCategoryConfigs(StringPiece value) {
 }
 
 bool splitNameValue(
-    StringPiece input,
-    StringPiece* outName,
-    StringPiece* outValue) {
+    StringPiece input, StringPiece* outName, StringPiece* outValue) {
   size_t equalIndex = input.find('=');
   if (equalIndex == StringPiece::npos) {
     return false;
@@ -403,7 +396,7 @@ std::pair<std::string, LogHandlerConfig> parseHandlerConfig(StringPiece value) {
         handlerName,
         "\": name cannot contain a comma when using the basic config format")};
   }
-  if (handlerType.hasValue()) {
+  if (handlerType.has_value()) {
     if (handlerType->empty()) {
       throw LogConfigParseError{to<string>(
           "error parsing configuration for log handler \"",
@@ -585,7 +578,7 @@ dynamic logConfigToDynamic(const LogHandlerConfig& config) {
     options.insert(opt.first, opt.second);
   }
   auto result = dynamic::object("options", options);
-  if (config.type.hasValue()) {
+  if (config.type.has_value()) {
     result("type", config.type.value());
   }
   return result;
@@ -595,7 +588,7 @@ dynamic logConfigToDynamic(const LogCategoryConfig& config) {
   auto value = dynamic::object("level", logLevelToString(config.level))(
       "inherit", config.inheritParentLevel)(
       "propagate", logLevelToString(config.propagateLevelMessagesToParent));
-  if (config.handlers.hasValue()) {
+  if (config.handlers.has_value()) {
     auto handlers = dynamic::array();
     for (const auto& handlerName : config.handlers.value()) {
       handlers.push_back(handlerName);

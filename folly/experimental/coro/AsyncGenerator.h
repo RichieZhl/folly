@@ -17,170 +17,33 @@
 #pragma once
 
 #include <folly/CancellationToken.h>
+#include <folly/ExceptionWrapper.h>
 #include <folly/Traits.h>
+#include <folly/Try.h>
+#include <folly/experimental/coro/Coroutine.h>
 #include <folly/experimental/coro/CurrentExecutor.h>
 #include <folly/experimental/coro/Invoke.h>
-#include <folly/experimental/coro/Utils.h>
+#include <folly/experimental/coro/Result.h>
 #include <folly/experimental/coro/ViaIfAsync.h>
+#include <folly/experimental/coro/WithAsyncStack.h>
 #include <folly/experimental/coro/WithCancellation.h>
+#include <folly/experimental/coro/detail/Malloc.h>
 #include <folly/experimental/coro/detail/ManualLifetime.h>
+#include <folly/tracing/AsyncStack.h>
 
 #include <glog/logging.h>
 
-#include <experimental/coroutine>
 #include <iterator>
 #include <type_traits>
 
+#if FOLLY_HAS_COROUTINES
+
 namespace folly {
 namespace coro {
-
-template <typename Reference, typename Value>
-class AsyncGenerator;
-
 namespace detail {
 
 template <typename Reference, typename Value>
-class AsyncGeneratorPromise {
-  class YieldAwaiter {
-   public:
-    bool await_ready() noexcept {
-      return false;
-    }
-    std::experimental::coroutine_handle<> await_suspend(
-        std::experimental::coroutine_handle<AsyncGeneratorPromise> h) noexcept {
-      return h.promise().continuation_;
-    }
-    void await_resume() noexcept {}
-  };
-
- public:
-  ~AsyncGeneratorPromise() {
-    if (hasValue_) {
-      value_.destruct();
-    }
-  }
-
-  AsyncGenerator<Reference, Value> get_return_object() noexcept;
-
-  std::experimental::suspend_always initial_suspend() noexcept {
-    return {};
-  }
-
-  YieldAwaiter final_suspend() noexcept {
-    DCHECK(!hasValue_);
-    return {};
-  }
-
-  YieldAwaiter yield_value(Reference&& value) noexcept(
-      std::is_nothrow_move_constructible<Reference>::value) {
-    DCHECK(!hasValue_);
-    value_.construct(static_cast<Reference&&>(value));
-    hasValue_ = true;
-    clearContext();
-    return YieldAwaiter{};
-  }
-
-  // In the case where 'Reference' is not actually a reference-type we
-  // allow implicit conversion from the co_yield argument to Reference.
-  // However, we don't want to allow this for cases where 'Reference' _is_
-  // a reference because this could result in the reference binding to a
-  // temporary that results from an implicit conversion.
-  template <
-      typename U,
-      std::enable_if_t<
-          !std::is_reference_v<Reference> &&
-              std::is_convertible_v<U&&, Reference>,
-          int> = 0>
-  YieldAwaiter yield_value(U&& value) noexcept(
-      std::is_nothrow_constructible_v<Reference, U>) {
-    DCHECK(!hasValue_);
-    value_.construct(static_cast<U&&>(value));
-    hasValue_ = true;
-    clearContext();
-    return {};
-  }
-
-  void unhandled_exception() noexcept {
-    DCHECK(!hasValue_);
-    exception_ = std::current_exception();
-  }
-
-  void return_void() noexcept {
-    DCHECK(!hasValue_);
-  }
-
-  template <typename U>
-  auto await_transform(U&& value) {
-    return folly::coro::co_viaIfAsync(
-        executor_.get_alias(),
-        folly::coro::co_withCancellation(
-            cancelToken_, static_cast<U&&>(value)));
-  }
-
-  auto await_transform(folly::coro::co_current_executor_t) noexcept {
-    return AwaitableReady<folly::Executor*>{executor_.get()};
-  }
-
-  auto await_transform(folly::coro::co_current_cancellation_token_t) noexcept {
-    return AwaitableReady<folly::CancellationToken>{cancelToken_};
-  }
-
-  void setCancellationToken(folly::CancellationToken cancelToken) noexcept {
-    // Only keep the first cancellation token.
-    // ie. the inner-most cancellation scope of the consumer's calling context.
-    if (!hasCancelTokenOverride_) {
-      cancelToken_ = std::move(cancelToken);
-      hasCancelTokenOverride_ = true;
-    }
-  }
-
-  void setExecutor(folly::Executor::KeepAlive<> executor) noexcept {
-    executor_ = std::move(executor);
-  }
-
-  void setContinuation(
-      std::experimental::coroutine_handle<> continuation) noexcept {
-    continuation_ = continuation;
-  }
-
-  void throwIfException() {
-    DCHECK(!hasValue_);
-    if (exception_) {
-      std::rethrow_exception(exception_);
-    }
-  }
-
-  decltype(auto) getRvalue() noexcept {
-    DCHECK(hasValue_);
-    return std::move(value_).get();
-  }
-
-  void clearValue() noexcept {
-    if (hasValue_) {
-      hasValue_ = false;
-      value_.destruct();
-    }
-  }
-
-  bool hasValue() const noexcept {
-    return hasValue_;
-  }
-
- private:
-  void clearContext() noexcept {
-    executor_ = {};
-    cancelToken_ = {};
-    hasCancelTokenOverride_ = false;
-  }
-
-  std::experimental::coroutine_handle<> continuation_;
-  folly::Executor::KeepAlive<> executor_;
-  folly::CancellationToken cancelToken_;
-  std::exception_ptr exception_;
-  ManualLifetime<Reference> value_;
-  bool hasValue_ = false;
-  bool hasCancelTokenOverride_ = false;
-};
+class AsyncGeneratorPromise;
 
 } // namespace detail
 
@@ -277,7 +140,7 @@ class FOLLY_NODISCARD AsyncGenerator {
   using promise_type = detail::AsyncGeneratorPromise<Reference, Value>;
 
  private:
-  using handle_t = std::experimental::coroutine_handle<promise_type>;
+  using handle_t = coroutine_handle<promise_type>;
 
  public:
   using value_type = Value;
@@ -304,9 +167,7 @@ class FOLLY_NODISCARD AsyncGenerator {
     return *this;
   }
 
-  void swap(AsyncGenerator& other) noexcept {
-    std::swap(coro_, other.coro_);
-  }
+  void swap(AsyncGenerator& other) noexcept { std::swap(coro_, other.coro_); }
 
   class NextAwaitable;
   class NextSemiAwaitable;
@@ -342,13 +203,9 @@ class FOLLY_NODISCARD AsyncGenerator {
       return *this;
     }
 
-    bool has_value() const noexcept {
-      return hasValue_;
-    }
+    bool has_value() const noexcept { return hasValue_; }
 
-    explicit operator bool() const noexcept {
-      return has_value();
-    }
+    explicit operator bool() const noexcept { return has_value(); }
 
     decltype(auto) value() & {
       DCHECK(has_value());
@@ -370,29 +227,21 @@ class FOLLY_NODISCARD AsyncGenerator {
       return std::move(value_).get();
     }
 
-    decltype(auto) operator*() & {
-      return value();
-    }
+    decltype(auto) operator*() & { return value(); }
 
-    decltype(auto) operator*() && {
-      return std::move(*this).value();
-    }
+    decltype(auto) operator*() && { return std::move(*this).value(); }
 
-    decltype(auto) operator*() const& {
-      return value();
-    }
+    decltype(auto) operator*() const& { return value(); }
 
-    decltype(auto) operator*() const&& {
-      return std::move(*this).value();
-    }
+    decltype(auto) operator*() const&& { return std::move(*this).value(); }
 
-    decltype(auto) operator-> () {
+    decltype(auto) operator->() {
       DCHECK(has_value());
       auto&& x = value_.get();
       return std::addressof(x);
     }
 
-    decltype(auto) operator-> () const {
+    decltype(auto) operator->() const {
       DCHECK(has_value());
       auto&& x = value_.get();
       return std::addressof(x);
@@ -410,22 +259,32 @@ class FOLLY_NODISCARD AsyncGenerator {
 
   class NextAwaitable {
    public:
-    bool await_ready() {
-      return !coro_;
-    }
+    bool await_ready() noexcept { return !coro_; }
 
-    handle_t await_suspend(
-        std::experimental::coroutine_handle<> continuation) noexcept {
+    template <typename Promise>
+    FOLLY_NOINLINE auto await_suspend(
+        coroutine_handle<Promise> continuation) noexcept {
       auto& promise = coro_.promise();
+
       promise.setContinuation(continuation);
       promise.clearValue();
-      return coro_;
+
+      auto& asyncFrame = promise.getAsyncFrame();
+      asyncFrame.setReturnAddress();
+
+      if constexpr (detail::promiseHasAsyncFrame_v<Promise>) {
+        folly::pushAsyncStackFrameCallerCallee(
+            continuation.promise().getAsyncFrame(), asyncFrame);
+        return coro_;
+      } else {
+        folly::resumeCoroutineWithNewAsyncStackRoot(coro_);
+      }
     }
 
     NextResult await_resume() {
       if (!coro_) {
         return NextResult{};
-      } else if (coro_.done()) {
+      } else if (!coro_.promise().hasValue()) {
         coro_.promise().throwIfException();
         return NextResult{};
       } else {
@@ -433,9 +292,25 @@ class FOLLY_NODISCARD AsyncGenerator {
       }
     }
 
+    folly::Try<NextResult> await_resume_try() {
+      if (coro_) {
+        if (coro_.promise().hasValue()) {
+          return folly::Try<NextResult>(NextResult{coro_});
+        } else if (coro_.promise().hasException()) {
+          return folly::Try<NextResult>(coro_.promise().getException());
+        }
+      }
+      return folly::Try<NextResult>(NextResult{});
+    }
+
    private:
     friend NextSemiAwaitable;
     explicit NextAwaitable(handle_t coro) noexcept : coro_(coro) {}
+
+    friend NextAwaitable tag_invoke(
+        cpo_t<co_withAsyncStack>, NextAwaitable awaitable) noexcept {
+      return NextAwaitable{awaitable.coro_};
+    }
 
     handle_t coro_;
   };
@@ -450,8 +325,7 @@ class FOLLY_NODISCARD AsyncGenerator {
     }
 
     friend NextSemiAwaitable co_withCancellation(
-        CancellationToken cancelToken,
-        NextSemiAwaitable&& awaitable) {
+        CancellationToken cancelToken, NextSemiAwaitable&& awaitable) {
       if (awaitable.coro_) {
         awaitable.coro_.promise().setCancellationToken(std::move(cancelToken));
       }
@@ -472,34 +346,272 @@ class FOLLY_NODISCARD AsyncGenerator {
   }
 
   template <typename F, typename... A, typename F_, typename... A_>
-  friend AsyncGenerator
-  folly_co_invoke(tag_t<AsyncGenerator, F, A...>, F_ f, A_... a) {
+  friend AsyncGenerator tag_invoke(
+      tag_t<co_invoke_fn>, tag_t<AsyncGenerator, F, A...>, F_ f, A_... a) {
     auto r = invoke(static_cast<F&&>(f), static_cast<A&&>(a)...);
-    while (auto v = co_await r.next()) {
-      co_yield std::move(v).value();
+    while (true) {
+      co_yield co_result(co_await co_awaitTry(r.next()));
     }
   }
 
  private:
   friend class detail::AsyncGeneratorPromise<Reference, Value>;
 
-  explicit AsyncGenerator(
-      std::experimental::coroutine_handle<promise_type> coro) noexcept
+  explicit AsyncGenerator(coroutine_handle<promise_type> coro) noexcept
       : coro_(coro) {}
 
-  std::experimental::coroutine_handle<promise_type> coro_;
+  coroutine_handle<promise_type> coro_;
 };
 
 namespace detail {
 
 template <typename Reference, typename Value>
-AsyncGenerator<Reference, Value>
-AsyncGeneratorPromise<Reference, Value>::get_return_object() noexcept {
-  return AsyncGenerator<Reference, Value>{std::experimental::coroutine_handle<
-      AsyncGeneratorPromise<Reference, Value>>::from_promise(*this)};
-}
+class AsyncGeneratorPromise {
+  class YieldAwaiter {
+   public:
+    bool await_ready() noexcept { return false; }
+    coroutine_handle<> await_suspend(
+        coroutine_handle<AsyncGeneratorPromise> h) noexcept {
+      AsyncGeneratorPromise& promise = h.promise();
+      // Pop AsyncStackFrame first as clearContext() clears the frame state.
+      folly::popAsyncStackFrameCallee(promise.getAsyncFrame());
+      promise.clearContext();
+      return promise.continuation_;
+    }
+    void await_resume() noexcept {}
+  };
+
+ public:
+  AsyncGeneratorPromise() noexcept {}
+
+  ~AsyncGeneratorPromise() {
+    switch (state_) {
+      case State::VALUE:
+        folly::coro::detail::deactivate(value_);
+        break;
+      case State::EXCEPTION_WRAPPER:
+        folly::coro::detail::deactivate(exceptionWrapper_);
+        break;
+      case State::EXCEPTION_PTR:
+        folly::coro::detail::deactivate(exceptionPtr_);
+        break;
+      case State::DONE:
+      case State::INVALID:
+        break;
+    }
+  }
+
+  static void* operator new(std::size_t size) {
+    return ::folly_coro_async_malloc(size);
+  }
+
+  static void operator delete(void* ptr, std::size_t size) {
+    ::folly_coro_async_free(ptr, size);
+  }
+
+  AsyncGenerator<Reference, Value> get_return_object() noexcept {
+    return AsyncGenerator<Reference, Value>{
+        coroutine_handle<AsyncGeneratorPromise<Reference, Value>>::from_promise(
+            *this)};
+  }
+
+  suspend_always initial_suspend() noexcept { return {}; }
+
+  YieldAwaiter final_suspend() noexcept {
+    DCHECK(!hasValue());
+    return {};
+  }
+
+  YieldAwaiter yield_value(Reference&& value) noexcept(
+      std::is_nothrow_move_constructible<Reference>::value) {
+    DCHECK(state_ == State::INVALID);
+    folly::coro::detail::activate(value_, static_cast<Reference&&>(value));
+    state_ = State::VALUE;
+    return YieldAwaiter{};
+  }
+
+  // In the case where 'Reference' is not actually a reference-type we
+  // allow implicit conversion from the co_yield argument to Reference.
+  // However, we don't want to allow this for cases where 'Reference' _is_
+  // a reference because this could result in the reference binding to a
+  // temporary that results from an implicit conversion.
+  template <
+      typename U,
+      std::enable_if_t<
+          !std::is_reference_v<Reference> &&
+              std::is_convertible_v<U&&, Reference>,
+          int> = 0>
+  YieldAwaiter yield_value(U&& value) noexcept(
+      std::is_nothrow_constructible_v<Reference, U>) {
+    DCHECK(state_ == State::INVALID);
+    folly::coro::detail::activate(value_, static_cast<U&&>(value));
+    state_ = State::VALUE;
+    return {};
+  }
+
+  YieldAwaiter yield_value(co_error&& error) noexcept {
+    DCHECK(state_ == State::INVALID);
+    folly::coro::detail::activate(
+        exceptionWrapper_, std::move(error.exception()));
+    state_ = State::EXCEPTION_WRAPPER;
+    return {};
+  }
+
+  YieldAwaiter yield_value(co_result<Value>&& res) noexcept {
+    if (res.result().hasValue()) {
+      return yield_value(std::move(res.result().value()));
+    } else if (res.result().hasException()) {
+      return yield_value(co_error(res.result().exception()));
+    } else {
+      return_void();
+      return {};
+    }
+  }
+
+  YieldAwaiter yield_value(
+      co_result<typename AsyncGenerator<Reference, Value>::NextResult>&&
+          res) noexcept {
+    DCHECK(res.result().hasValue() || res.result().hasException());
+    if (res.result().hasException()) {
+      return yield_value(co_error(res.result().exception()));
+    } else if (res.result().hasValue()) {
+      if (res.result()->has_value()) {
+        return yield_value(std::move(res.result()->value()));
+      } else {
+        return_void();
+        return {};
+      }
+    }
+    return yield_value(co_error(UsingUninitializedTry{}));
+  }
+
+  variant_awaitable<YieldAwaiter, ready_awaitable<>> await_transform(
+      co_safe_point_t) noexcept {
+    if (cancelToken_.isCancellationRequested()) {
+      return yield_value(co_cancelled);
+    }
+    return ready_awaitable<>{};
+  }
+
+  void unhandled_exception() noexcept {
+    DCHECK(state_ == State::INVALID);
+    folly::coro::detail::activate(exceptionPtr_, std::current_exception());
+    state_ = State::EXCEPTION_PTR;
+  }
+
+  void return_void() noexcept {
+    DCHECK(state_ == State::INVALID);
+    state_ = State::DONE;
+  }
+
+  template <typename U>
+  auto await_transform(U&& value) {
+    return folly::coro::co_withAsyncStack(folly::coro::co_viaIfAsync(
+        executor_.get_alias(),
+        folly::coro::co_withCancellation(
+            cancelToken_, static_cast<U&&>(value))));
+  }
+
+  auto await_transform(folly::coro::co_current_executor_t) noexcept {
+    return ready_awaitable<folly::Executor*>{executor_.get()};
+  }
+
+  auto await_transform(folly::coro::co_current_cancellation_token_t) noexcept {
+    return ready_awaitable<const folly::CancellationToken&>{cancelToken_};
+  }
+
+  void setCancellationToken(folly::CancellationToken cancelToken) noexcept {
+    // Only keep the first cancellation token.
+    // ie. the inner-most cancellation scope of the consumer's calling
+    // context.
+    if (!hasCancelTokenOverride_) {
+      cancelToken_ = std::move(cancelToken);
+      hasCancelTokenOverride_ = true;
+    }
+  }
+
+  void setExecutor(folly::Executor::KeepAlive<> executor) noexcept {
+    DCHECK(executor);
+    executor_ = std::move(executor);
+  }
+
+  void setContinuation(coroutine_handle<> continuation) noexcept {
+    continuation_ = continuation;
+  }
+
+  bool hasException() const noexcept {
+    return state_ == State::EXCEPTION_WRAPPER || state_ == State::EXCEPTION_PTR;
+  }
+
+  folly::exception_wrapper getException() noexcept {
+    DCHECK(hasException());
+    if (state_ == State::EXCEPTION_WRAPPER) {
+      return std::move(exceptionWrapper_.get());
+    } else {
+      return exception_wrapper(std::move(exceptionPtr_.get()));
+    }
+  }
+
+  void throwIfException() {
+    if (state_ == State::EXCEPTION_WRAPPER) {
+      exceptionWrapper_.get().throw_exception();
+    } else if (state_ == State::EXCEPTION_PTR) {
+      std::rethrow_exception(std::move(exceptionPtr_.get()));
+    }
+  }
+
+  decltype(auto) getRvalue() noexcept {
+    DCHECK(hasValue());
+    return std::move(value_).get();
+  }
+
+  void clearValue() noexcept {
+    if (hasValue()) {
+      state_ = State::INVALID;
+      folly::coro::detail::deactivate(value_);
+    }
+  }
+
+  bool hasValue() const noexcept { return state_ == State::VALUE; }
+
+  folly::AsyncStackFrame& getAsyncFrame() noexcept { return asyncFrame_; }
+
+ private:
+  void clearContext() noexcept {
+    executor_ = {};
+    cancelToken_ = {};
+    hasCancelTokenOverride_ = false;
+    asyncFrame_ = {};
+  }
+
+  enum class State : std::uint8_t {
+    INVALID,
+    VALUE,
+    EXCEPTION_PTR,
+    EXCEPTION_WRAPPER,
+    DONE,
+  };
+
+  coroutine_handle<> continuation_;
+  folly::AsyncStackFrame asyncFrame_;
+  folly::Executor::KeepAlive<> executor_;
+  folly::CancellationToken cancelToken_;
+  union {
+    // Store both an exception_wrapper and an exception_ptr to
+    // avoid needing to rethrow the exception in unhandled_exception()
+    // to ensure we capture the type-information into the exception_wrapper
+    // just in case we are only going to rethrow it back into the awaiting
+    // coroutine.
+    ManualLifetime<folly::exception_wrapper> exceptionWrapper_;
+    ManualLifetime<std::exception_ptr> exceptionPtr_;
+    ManualLifetime<Reference> value_;
+  };
+  State state_ = State::INVALID;
+  bool hasCancelTokenOverride_ = false;
+};
 
 } // namespace detail
-
 } // namespace coro
 } // namespace folly
+
+#endif

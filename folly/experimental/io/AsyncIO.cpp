@@ -23,13 +23,14 @@
 #include <string>
 
 #include <boost/intrusive/parent_from_member.hpp>
+#include <fmt/ostream.h>
 #include <glog/logging.h>
 
 #include <folly/Exception.h>
-#include <folly/Format.h>
 #include <folly/Likely.h>
 #include <folly/String.h>
 #include <folly/portability/Unistd.h>
+#include <folly/small_vector.h>
 
 // debugging helpers
 namespace {
@@ -55,7 +56,8 @@ const char* iocbCmdToString(short int cmd_short) {
 #undef X
 
 void toStream(std::ostream& os, const iocb& cb) {
-  os << folly::format(
+  fmt::print(
+      os,
       "data={}, key={}, opcode={}, reqprio={}, fd={}, f={}, ",
       cb.data,
       cb.key,
@@ -67,7 +69,8 @@ void toStream(std::ostream& os, const iocb& cb) {
   switch (cb.aio_lio_opcode) {
     case IO_CMD_PREAD:
     case IO_CMD_PWRITE:
-      os << folly::format(
+      fmt::print(
+          os,
           "buf={}, offset={}, nbytes={}, ",
           cb.u.c.buf,
           cb.u.c.offset,
@@ -198,12 +201,34 @@ int AsyncIO::submitOne(AsyncBase::Op* op) {
   return io_submit(ctx_, 1, &cb);
 }
 
+int AsyncIO::submitRange(Range<AsyncBase::Op**> ops) {
+  std::vector<iocb*> vec;
+  vec.reserve(ops.size());
+  for (auto& op : ops) {
+    AsyncIOOp* aop = op->getAsyncIOOp();
+    if (!aop) {
+      continue;
+    }
+
+    iocb* cb = &aop->iocb_;
+    cb->data = nullptr; // unused
+    if (pollFd_ != -1) {
+      io_set_eventfd(cb, pollFd_);
+    }
+
+    vec.push_back(cb);
+  }
+
+  return vec.size() ? io_submit(ctx_, vec.size(), vec.data()) : -1;
+}
+
 Range<AsyncBase::Op**> AsyncIO::doWait(
     WaitType type,
     size_t minRequests,
     size_t maxRequests,
     std::vector<AsyncBase::Op*>& result) {
-  io_event events[maxRequests];
+  size_t constexpr kNumInlineRequests = 16;
+  folly::small_vector<io_event, kNumInlineRequests> events(maxRequests);
 
   // Unfortunately, Linux AIO doesn't implement io_cancel, so even for
   // WaitType::CANCEL we have to wait for IO completion.
@@ -218,7 +243,7 @@ Range<AsyncBase::Op**> AsyncIO::doWait(
           ctx_,
           minRequests - count,
           maxRequests - count,
-          events + count,
+          events.data() + count,
           /* timeout */ nullptr); // wait forever
     } while (ret == -EINTR);
     // Check as may not be able to recover without leaking events.

@@ -26,6 +26,10 @@
 
 #include <folly/portability/GTest.h>
 
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
+
 using namespace folly;
 
 TEST(Random, StateSize) {
@@ -136,6 +140,29 @@ TEST(Random, sanity) {
         vals.size(),
         std::unordered_set<uint64_t>(vals.begin(), vals.end()).size());
   }
+}
+
+TEST(Random, oneIn) {
+  for (auto i = 0; i < 10; ++i) {
+    EXPECT_FALSE(folly::Random::oneIn(0));
+    EXPECT_FALSE(folly::Random::secureOneIn(0));
+    EXPECT_TRUE(folly::Random::oneIn(1));
+    EXPECT_TRUE(folly::Random::secureOneIn(1));
+  }
+
+  // When using higher sampling rates, we'll just ensure that we see both
+  // outcomes. We won't worry about statistical validity since we defer that to
+  // folly::Random.
+  auto constexpr kSeenTrue{1};
+  auto constexpr kSeenFalse{2};
+  auto constexpr kSeenBoth{kSeenTrue | kSeenFalse};
+
+  auto seenSoFar{0};
+  for (auto i = 0; i < 1000 && seenSoFar != kSeenBoth; ++i) {
+    seenSoFar |= (folly::Random::oneIn(10) ? kSeenTrue : kSeenFalse);
+  }
+
+  EXPECT_EQ(kSeenBoth, seenSoFar);
 }
 
 #ifndef _WIN32

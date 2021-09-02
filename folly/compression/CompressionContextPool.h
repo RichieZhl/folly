@@ -24,18 +24,16 @@
 namespace folly {
 namespace compression {
 
-template <typename T, typename Creator, typename Deleter>
+template <typename T, typename Creator, typename Deleter, typename Resetter>
 class CompressionContextPool {
  private:
   using InternalRef = std::unique_ptr<T, Deleter>;
 
   class ReturnToPoolDeleter {
    public:
-    using Pool = CompressionContextPool<T, Creator, Deleter>;
+    using Pool = CompressionContextPool<T, Creator, Deleter, Resetter>;
 
-    explicit ReturnToPoolDeleter(Pool* pool) : pool_(pool) {
-      DCHECK(pool);
-    }
+    explicit ReturnToPoolDeleter(Pool* pool) : pool_(pool) { DCHECK(pool); }
 
     void operator()(T* t) {
       InternalRef ptr(t, pool_->deleter_);
@@ -52,8 +50,11 @@ class CompressionContextPool {
 
   explicit CompressionContextPool(
       Creator creator = Creator(),
-      Deleter deleter = Deleter())
-      : creator_(std::move(creator)), deleter_(std::move(deleter)) {}
+      Deleter deleter = Deleter(),
+      Resetter resetter = Resetter())
+      : creator_(std::move(creator)),
+        deleter_(std::move(deleter)),
+        resetter_(std::move(resetter)) {}
 
   Ref get() {
     auto stack = stack_.wlock();
@@ -73,22 +74,22 @@ class CompressionContextPool {
     return Ref(ptr.release(), get_deleter());
   }
 
-  size_t size() {
-    return stack_.rlock()->size();
-  }
+  size_t size() { return stack_.rlock()->size(); }
 
-  ReturnToPoolDeleter get_deleter() {
-    return ReturnToPoolDeleter(this);
-  }
+  ReturnToPoolDeleter get_deleter() { return ReturnToPoolDeleter(this); }
+
+  Resetter& get_resetter() { return resetter_; }
 
  private:
   void add(InternalRef ptr) {
     DCHECK(ptr);
+    resetter_(ptr.get());
     stack_.wlock()->push_back(std::move(ptr));
   }
 
   Creator creator_;
   Deleter deleter_;
+  Resetter resetter_;
 
   folly::Synchronized<std::vector<InternalRef>> stack_;
 };

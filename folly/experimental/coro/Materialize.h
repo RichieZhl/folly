@@ -18,8 +18,11 @@
 
 #include <folly/ExceptionWrapper.h>
 #include <folly/experimental/coro/AsyncGenerator.h>
+#include <folly/experimental/coro/Coroutine.h>
 
 #include <variant>
+
+#if FOLLY_HAS_COROUTINES
 
 namespace folly {
 namespace coro {
@@ -48,38 +51,34 @@ class CallbackRecord {
     auto selector =
         std::exchange(that->selector_, CallbackRecordSelector::Invalid);
     if (selector == CallbackRecordSelector::Value) {
-      that->value_.destruct();
+      detail::deactivate(that->value_);
     } else if (selector == CallbackRecordSelector::Error) {
-      that->error_.destruct();
+      detail::deactivate(that->error_);
     }
   }
   template <class OtherReference>
   static void convert_variant(
-      CallbackRecord* that,
-      const CallbackRecord<OtherReference>& other) {
+      CallbackRecord* that, const CallbackRecord<OtherReference>& other) {
     if (other.hasValue()) {
-      that->value_.construct(other.value_.get());
+      detail::activate(that->value_, other.value_.get());
     } else if (other.hasError()) {
-      that->error_.construct(other.error_.get());
+      detail::activate(that->error_, other.error_.get());
     }
     that->selector_ = other.selector_;
   }
   template <class OtherReference>
   static void convert_variant(
-      CallbackRecord* that,
-      CallbackRecord<OtherReference>&& other) {
+      CallbackRecord* that, CallbackRecord<OtherReference>&& other) {
     if (other.hasValue()) {
-      that->value_.construct(std::move(other.value_).get());
+      detail::activate(that->value_, std::move(other.value_).get());
     } else if (other.hasError()) {
-      that->error_.construct(std::move(other.error_).get());
+      detail::activate(that->error_, std::move(other.error_).get());
     }
     that->selector_ = other.selector_;
   }
 
  public:
-  ~CallbackRecord() {
-    clear(this);
-  }
+  ~CallbackRecord() { clear(this); }
 
   CallbackRecord() noexcept : selector_(CallbackRecordSelector::Invalid) {}
 
@@ -87,16 +86,15 @@ class CallbackRecord {
   CallbackRecord(const std::in_place_index_t<0>&, V&& v) noexcept(
       std::is_nothrow_constructible_v<T, V>)
       : CallbackRecord() {
-    value_.construct(std::forward<V>(v));
+    detail::activate(value_, std::forward<V>(v));
     selector_ = CallbackRecordSelector::Value;
   }
   explicit CallbackRecord(const std::in_place_index_t<1>&) noexcept
       : selector_(CallbackRecordSelector::None) {}
   CallbackRecord(
-      const std::in_place_index_t<2>&,
-      folly::exception_wrapper e) noexcept
+      const std::in_place_index_t<2>&, folly::exception_wrapper e) noexcept
       : CallbackRecord() {
-    error_.construct(std::move(e));
+    detail::activate(error_, std::move(e));
     selector_ = CallbackRecordSelector::Error;
   }
 
@@ -218,5 +216,7 @@ AsyncGenerator<CallbackRecord<Reference>, CallbackRecord<Value>> materialize(
 
 } // namespace coro
 } // namespace folly
+
+#endif // FOLLY_HAS_COROUTINES
 
 #include <folly/experimental/coro/Materialize-inl.h>

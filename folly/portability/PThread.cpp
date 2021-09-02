@@ -17,10 +17,13 @@
 #include <folly/portability/PThread.h>
 
 #if !FOLLY_HAVE_PTHREAD && defined(_WIN32)
-#include <boost/thread/tss.hpp> // @manual
+#include <boost/thread/exceptions.hpp>
+#include <boost/thread/tss.hpp>
+#include <boost/version.hpp>
 
 #include <errno.h>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <exception>
@@ -97,7 +100,7 @@ struct pthread_startup_info {
   void* startupArgument;
 };
 
-DWORD internal_pthread_thread_start(void* arg) {
+DWORD __stdcall internal_pthread_thread_start(void* arg) {
   // We are now in the new thread.
   auto startupInfo = reinterpret_cast<pthread_startup_info*>(arg);
   current_thread_self = startupInfo->thread;
@@ -207,9 +210,7 @@ DWORD pthread_getw32threadid_np(pthread_t thread) {
 }
 
 int pthread_setschedparam(
-    pthread_t thread,
-    int policy,
-    const sched_param* param) {
+    pthread_t thread, int policy, const sched_param* param) {
   if (thread->detached) {
     errno = EINVAL;
     return -1;
@@ -375,8 +376,7 @@ struct pthread_mutex_t_ {
 };
 
 int pthread_mutex_init(
-    pthread_mutex_t* mutex,
-    const pthread_mutexattr_t* attr) {
+    pthread_mutex_t* mutex, const pthread_mutexattr_t* attr) {
   if (mutex == nullptr) {
     return EINVAL;
   }
@@ -429,8 +429,7 @@ static std::chrono::system_clock::time_point timespec_to_time_point(
 }
 
 int pthread_mutex_timedlock(
-    pthread_mutex_t* mutex,
-    const timespec* abs_timeout) {
+    pthread_mutex_t* mutex, const timespec* abs_timeout) {
   if (mutex == nullptr || abs_timeout == nullptr) {
     return EINVAL;
   }
@@ -503,8 +502,7 @@ int pthread_rwlock_tryrdlock(pthread_rwlock_t* rwlock) {
 }
 
 int pthread_rwlock_timedrdlock(
-    pthread_rwlock_t* rwlock,
-    const timespec* abs_timeout) {
+    pthread_rwlock_t* rwlock, const timespec* abs_timeout) {
   if (rwlock == nullptr) {
     return EINVAL;
   }
@@ -543,8 +541,7 @@ int pthread_rwlock_trywrlock(pthread_rwlock_t* rwlock) {
 }
 
 int pthread_rwlock_timedwrlock(
-    pthread_rwlock_t* rwlock,
-    const timespec* abs_timeout) {
+    pthread_rwlock_t* rwlock, const timespec* abs_timeout) {
   if (rwlock == nullptr) {
     return EINVAL;
   }
@@ -617,9 +614,7 @@ int pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex) {
 }
 
 int pthread_cond_timedwait(
-    pthread_cond_t* cond,
-    pthread_mutex_t* mutex,
-    const timespec* abstime) {
+    pthread_cond_t* cond, pthread_mutex_t* mutex, const timespec* abstime) {
   if (cond == nullptr || mutex == nullptr || abstime == nullptr) {
     return EINVAL;
   }
@@ -683,7 +678,12 @@ int pthread_setspecific(pthread_key_t key, const void* value) {
     // function, which we don't want to do.
     boost::detail::set_tss_data(
         realKey,
+#if BOOST_VERSION >= 107000
+        boost::detail::thread::cleanup_caller_t(),
+        boost::detail::thread::cleanup_func_t(),
+#else
         boost::shared_ptr<boost::detail::tss_cleanup_function>(),
+#endif
         const_cast<void*>(value),
         false);
     return 0;

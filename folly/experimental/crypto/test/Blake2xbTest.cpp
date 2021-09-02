@@ -15,14 +15,16 @@
  */
 
 #include <folly/experimental/crypto/Blake2xb.h>
-#include <folly/String.h>
-#include <folly/io/IOBuf.h>
-#include <folly/portability/GTest.h>
-#include <sodium.h>
 
 #include <memory>
 #include <string>
 #include <vector>
+
+#include <sodium.h>
+
+#include <folly/String.h>
+#include <folly/io/IOBuf.h>
+#include <folly/portability/GTest.h>
 
 // Note: the test vectors in this file were generated from
 // https://github.com/BLAKE2/BLAKE2/blob/master/testvectors/blake2-kat.h
@@ -64,9 +66,7 @@ class Blake2xbTestBase : public ::testing::Test {
 
 class Blake2xbTest : public Blake2xbTestBase {
  protected:
-  folly::ByteRange getHashKey() const override {
-    return {};
-  }
+  folly::ByteRange getHashKey() const override { return {}; }
 
   static const std::vector<std::string>& getTestVector() {
     static const std::vector<std::string> testVector = []() {

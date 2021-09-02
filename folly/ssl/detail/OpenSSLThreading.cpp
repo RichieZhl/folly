@@ -19,17 +19,20 @@
 #include <memory>
 #include <mutex>
 
+#include <glog/logging.h>
+
 #include <folly/Portability.h>
 #include <folly/SharedMutex.h>
 #include <folly/SpinLock.h>
 
-#include <glog/logging.h>
-
 // We cannot directly use portability/openssl because it also depends on us.
 // Therefore we directly use openssl includes. Order of includes is important
 // here. See portability/openssl.h.
+// clang-format off
 #include <folly/portability/Windows.h>
+// @lint-ignore CLANGTIDY
 #include <openssl/crypto.h>
+// clang-format on
 
 #if !defined(OPENSSL_IS_BORINGSSL)
 #define FOLLY_SSL_DETAIL_OPENSSL_IS_110 (OPENSSL_VERSION_NUMBER >= 0x10100000L)
@@ -39,6 +42,7 @@
 
 // OpenSSL requires us to provide the implementation of CRYPTO_dynlock_value
 // so it must be done in the global namespace.
+// @lint-ignore CLANGTIDY
 struct CRYPTO_dynlock_value {
   std::mutex mutex;
 };
@@ -69,10 +73,10 @@ bool isSSLLockDisabled(int lockId) {
 
 namespace {
 struct SSLLock {
-  explicit SSLLock(LockType inLockType = LockType::MUTEX)
+  FOLLY_MAYBE_UNUSED explicit SSLLock(LockType inLockType = LockType::MUTEX)
       : lockType(inLockType) {}
 
-  void lock(bool read) {
+  FOLLY_MAYBE_UNUSED void lock(bool read) {
     if (lockType == LockType::MUTEX) {
       mutex.lock();
     } else if (lockType == LockType::SPINLOCK) {
@@ -87,7 +91,7 @@ struct SSLLock {
     // lockType == LOCK_NONE, no-op
   }
 
-  void unlock(bool read) {
+  FOLLY_MAYBE_UNUSED void unlock(bool read) {
     if (lockType == LockType::MUTEX) {
       mutex.unlock();
     } else if (lockType == LockType::SPINLOCK) {
@@ -137,8 +141,8 @@ static CRYPTO_dynlock_value* dyn_create(const char*, int) {
   return new CRYPTO_dynlock_value;
 }
 
-static void
-dyn_lock(int mode, struct CRYPTO_dynlock_value* lock, const char*, int) {
+static void dyn_lock(
+    int mode, struct CRYPTO_dynlock_value* lock, const char*, int) {
   if (lock != nullptr) {
     if (mode & CRYPTO_LOCK) {
       lock->mutex.lock();

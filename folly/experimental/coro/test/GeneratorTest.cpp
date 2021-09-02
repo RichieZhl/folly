@@ -16,12 +16,13 @@
 
 #include <folly/Portability.h>
 
-#if FOLLY_HAS_COROUTINES
+#include <algorithm>
 
 #include <folly/ScopeGuard.h>
 #include <folly/experimental/coro/Generator.h>
 #include <folly/portability/GTest.h>
-#include <algorithm>
+
+#if FOLLY_HAS_COROUTINES
 
 namespace folly {
 namespace coro {
@@ -105,9 +106,7 @@ TEST_F(GeneratorTest, DestroyedBeforeCompletion_DestructsObjectsOnStack) {
   bool destructed = false;
   bool completed = false;
   auto f = [&]() -> Generator<std::uint32_t> {
-    SCOPE_EXIT {
-      destructed = true;
-    };
+    SCOPE_EXIT { destructed = true; };
 
     co_yield 1;
     co_yield 2;
@@ -128,10 +127,10 @@ TEST_F(GeneratorTest, DestroyedBeforeCompletion_DestructsObjectsOnStack) {
 }
 
 TEST_F(GeneratorTest, SimpleRecursiveYield) {
-  auto f = [](int n, auto& f) -> Generator<const std::uint32_t> {
+  auto f = [](int n, auto& f_) -> Generator<const std::uint32_t> {
     co_yield n;
     if (n > 0) {
-      co_yield f(n - 1, f);
+      co_yield f_(n - 1, f_);
       co_yield n;
     }
   };
@@ -188,7 +187,7 @@ TEST_F(GeneratorTest, NestedEmptyYield) {
 TEST_F(GeneratorTest, ExceptionThrownFromRecursiveCall_CanBeCaughtByCaller) {
   class SomeException : public std::exception {};
 
-  auto f = [](std::uint32_t depth, auto&& f) -> Generator<std::uint32_t> {
+  auto f = [](std::uint32_t depth, auto&& f_) -> Generator<std::uint32_t> {
     if (depth == 1u) {
       throw SomeException{};
     }
@@ -196,7 +195,7 @@ TEST_F(GeneratorTest, ExceptionThrownFromRecursiveCall_CanBeCaughtByCaller) {
     co_yield 1;
 
     try {
-      co_yield f(1, f);
+      co_yield f_(1, f_);
     } catch (const SomeException&) {
     }
 
@@ -215,14 +214,14 @@ TEST_F(GeneratorTest, ExceptionThrownFromRecursiveCall_CanBeCaughtByCaller) {
 TEST_F(GeneratorTest, ExceptionThrownFromNestedCall_CanBeCaughtByCaller) {
   class SomeException : public std::exception {};
 
-  auto f = [](std::uint32_t depth, auto&& f) -> Generator<std::uint32_t> {
+  auto f = [](std::uint32_t depth, auto&& f_) -> Generator<std::uint32_t> {
     if (depth == 4u) {
       throw SomeException{};
     } else if (depth == 3u) {
       co_yield 3;
 
       try {
-        co_yield f(4, f);
+        co_yield f_(4, f_);
       } catch (const SomeException&) {
       }
 
@@ -232,7 +231,7 @@ TEST_F(GeneratorTest, ExceptionThrownFromNestedCall_CanBeCaughtByCaller) {
     } else if (depth == 2u) {
       bool caught = false;
       try {
-        co_yield f(3, f);
+        co_yield f_(3, f_);
       } catch (const SomeException&) {
         caught = true;
       }
@@ -242,8 +241,8 @@ TEST_F(GeneratorTest, ExceptionThrownFromNestedCall_CanBeCaughtByCaller) {
       }
     } else {
       co_yield 1;
-      co_yield f(2, f);
-      co_yield f(3, f);
+      co_yield f_(2, f_);
+      co_yield f_(3, f_);
     }
   };
 
@@ -291,6 +290,20 @@ TEST_F(GeneratorTest, UsageInStandardAlgorithms) {
     auto b = iterate_range(5, 300);
     EXPECT_FALSE(std::equal(a.begin(), a.end(), b.begin(), b.end()));
   }
+}
+
+TEST_F(GeneratorTest, InvokeLambda) {
+  auto ptr = std::make_unique<int>(123);
+  auto gen = folly::coro::co_invoke(
+      [p = std::move(
+           ptr)]() mutable -> folly::coro::Generator<std::unique_ptr<int>&&> {
+        co_yield std::move(p);
+      });
+
+  auto it = gen.begin();
+  auto result = std::move(*it);
+  EXPECT_NE(result, nullptr);
+  EXPECT_EQ(*result, 123);
 }
 } // namespace coro
 } // namespace folly

@@ -16,12 +16,12 @@
 
 #include <folly/synchronization/AtomicUtil.h>
 
+#include <utility>
+
 #include <folly/Benchmark.h>
 #include <folly/Portability.h>
 #include <folly/Utility.h>
 #include <folly/portability/GTest.h>
-
-#include <utility>
 
 namespace folly {
 
@@ -91,9 +91,9 @@ TEST_F(AtomicCompareExchangeSuccTest, examples) {
 
   // properties
   for (auto succ : {relaxed, consume, acquire, release, acq_rel, seq_cst}) {
-    SCOPED_TRACE(succ);
+    SCOPED_TRACE(static_cast<int>(succ));
     for (auto fail : {relaxed, consume, acquire, seq_cst}) {
-      SCOPED_TRACE(fail);
+      SCOPED_TRACE(static_cast<int>(fail));
       EXPECT_EQ(succ, atomic_compare_exchange_succ(false, succ, fail));
       auto const sfix = atomic_compare_exchange_succ(true, succ, fail);
       EXPECT_GE(sfix, succ);
@@ -182,14 +182,12 @@ class Atomic {
       : onFetchOr_{std::move(onFetchOr)}, onFetchAnd_{std::move(onFetchAnd)} {}
 
   Integer fetch_or(
-      Integer value,
-      std::memory_order = std::memory_order_seq_cst) {
+      Integer value, std::memory_order = std::memory_order_seq_cst) {
     onFetchOr_();
     return std::exchange(integer_, integer_ | value);
   }
   Integer fetch_and(
-      Integer value,
-      std::memory_order = std::memory_order_seq_cst) {
+      Integer value, std::memory_order = std::memory_order_seq_cst) {
     onFetchAnd_();
     return std::exchange(integer_, integer_ & value);
   }

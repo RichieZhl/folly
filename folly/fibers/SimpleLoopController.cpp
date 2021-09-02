@@ -31,8 +31,7 @@ class SimpleLoopController::SimpleTimeoutManager : public TimeoutManager {
       : loopController_(loopController) {}
 
   void attachTimeoutManager(
-      AsyncTimeout* /* unused */,
-      InternalEnum /* unused */) final {}
+      AsyncTimeout* /* unused */, InternalEnum /* unused */) final {}
   void detachTimeoutManager(AsyncTimeout* /* unused */) final {}
 
   bool scheduleTimeout(AsyncTimeout* obj, timeout_type timeout) final {
@@ -44,7 +43,7 @@ class SimpleLoopController::SimpleTimeoutManager : public TimeoutManager {
 
   void cancelTimeout(AsyncTimeout* obj) final {
     CHECK(timeout_ && timeout_->first == obj);
-    timeout_.clear();
+    timeout_.reset();
   }
 
   void bumpHandlingTime() final {}
@@ -60,7 +59,7 @@ class SimpleLoopController::SimpleTimeoutManager : public TimeoutManager {
     }
 
     auto* timeout = timeout_->first;
-    timeout_.clear();
+    timeout_.reset();
     timeout->timeoutExpired();
   }
 

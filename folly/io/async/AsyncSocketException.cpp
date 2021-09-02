@@ -50,21 +50,19 @@ namespace folly {
       return "SSL error";
     case COULD_NOT_BIND:
       return "Could not bind";
-    case SASL_HANDSHAKE_TIMEOUT:
-      return "SASL handshake timeout";
     case NETWORK_ERROR:
       return "Network error";
     case EARLY_DATA_REJECTED:
       return "Early data rejected";
+    case CANCELED:
+      return "IO operation was canceled";
     default:
       return "(Invalid exception type)";
   }
 }
 
 /* static */ std::string AsyncSocketException::getMessage(
-    AsyncSocketExceptionType type,
-    const std::string& message,
-    int errnoCopy) {
+    AsyncSocketExceptionType type, const std::string& message, int errnoCopy) {
   if (errnoCopy != 0) {
     return sformat(
         "AsyncSocketException: {}, type = {}, errno = {} ({})",

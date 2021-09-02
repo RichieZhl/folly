@@ -16,10 +16,9 @@
 
 #include <folly/experimental/exception_tracer/ExceptionTracer.h>
 
+#include <cstdlib>
 #include <exception>
 #include <iostream>
-
-#include <dlfcn.h>
 
 #include <glog/logging.h>
 
@@ -29,6 +28,12 @@
 #include <folly/experimental/exception_tracer/ExceptionAbi.h>
 #include <folly/experimental/exception_tracer/StackTrace.h>
 #include <folly/experimental/symbolizer/Symbolizer.h>
+
+#if FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF
+
+#if defined(__GLIBCXX__)
+
+#include <dlfcn.h>
 
 namespace {
 
@@ -54,9 +59,7 @@ std::ostream& operator<<(std::ostream& out, const ExceptionInfo& info) {
 }
 
 void printExceptionInfo(
-    std::ostream& out,
-    const ExceptionInfo& info,
-    int options) {
+    std::ostream& out, const ExceptionInfo& info, int options) {
   out << "Exception type: ";
   if (info.type) {
     out << folly::demangle(*info.type);
@@ -200,6 +203,7 @@ std::vector<ExceptionInfo> getCurrentExceptions() {
   return exceptions;
 }
 
+#if FOLLY_USE_LIBSTDCPP
 namespace {
 
 std::terminate_handler origTerminate = abort;
@@ -238,6 +242,11 @@ void installHandlers() {
   };
   static Once once;
 }
+#endif // FOLLY_USE_LIBSTDCPP
 
 } // namespace exception_tracer
 } // namespace folly
+
+#endif // defined(__GLIBCXX__)
+
+#endif // FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF

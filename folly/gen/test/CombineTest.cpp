@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+#include <folly/gen/Combine.h>
+
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -23,7 +26,6 @@
 #include <folly/FBVector.h>
 #include <folly/Range.h>
 #include <folly/gen/Base.h>
-#include <folly/gen/Combine.h>
 #include <folly/portability/GFlags.h>
 #include <folly/portability/GTest.h>
 
@@ -37,6 +39,13 @@ const folly::gen::detail::Map<folly::gen::detail::MergeTuples> gTupleFlatten{};
 
 auto even = [](int i) -> bool { return i % 2 == 0; };
 auto odd = [](int i) -> bool { return i % 2 == 1; };
+auto initVectorUniquePtr(int value) {
+  std::vector<std::unique_ptr<int>> v;
+  v.push_back(std::make_unique<int>(value));
+  v.push_back(std::make_unique<int>(value));
+  v.push_back(std::make_unique<int>(value));
+  return v;
+}
 
 TEST(CombineGen, Interleave) {
   { // large (infinite) base, small container
@@ -51,6 +60,20 @@ TEST(CombineGen, Interleave) {
     auto interleaved = base | interleave(toInterleave | as<vector>());
     EXPECT_EQ(interleaved | as<vector>(), vector<int>({1, 2, 3, 4, 5, 6}));
   }
+}
+
+TEST(CombineGen, InterleaveMoveOnly) {
+  auto base = initVectorUniquePtr(1);
+  auto toInterleave = initVectorUniquePtr(2);
+  const auto interleaved =
+      from(base) | move | interleave(std::move(toInterleave)) | as<vector>();
+  ASSERT_EQ(interleaved.size(), 6);
+  EXPECT_EQ(*interleaved[0], 1);
+  EXPECT_EQ(*interleaved[1], 2);
+  EXPECT_EQ(*interleaved[2], 1);
+  EXPECT_EQ(*interleaved[3], 2);
+  EXPECT_EQ(*interleaved[4], 1);
+  EXPECT_EQ(*interleaved[5], 2);
 }
 
 TEST(CombineGen, Zip) {
@@ -85,6 +108,20 @@ TEST(CombineGen, Zip) {
     EXPECT_EQ(std::get<0>(combined[0]), 1);
     EXPECT_EQ(std::get<1>(combined[0]), "one");
   }
+}
+
+TEST(CombineGen, ZipMoveOnly) {
+  auto base = initVectorUniquePtr(1);
+  auto zippee = initVectorUniquePtr(2);
+  const auto combined =
+      from(base) | move | zip(std::move(zippee)) | as<vector>();
+  ASSERT_EQ(combined.size(), 3);
+  EXPECT_EQ(*std::get<0>(combined[0]), 1);
+  EXPECT_EQ(*std::get<1>(combined[0]), 2);
+  EXPECT_EQ(*std::get<0>(combined[1]), 1);
+  EXPECT_EQ(*std::get<1>(combined[1]), 2);
+  EXPECT_EQ(*std::get<0>(combined[2]), 1);
+  EXPECT_EQ(*std::get<1>(combined[2]), 2);
 }
 
 TEST(CombineGen, TupleFlatten) {
@@ -169,10 +206,4 @@ TEST(CombineGen, TupleFlatten) {
   // clang-format on
   ASSERT_EQ(zipped6.size(), 3);
   EXPECT_EQ(zipped6[0], std::make_tuple(1, "1", 'A', 1.0));
-}
-
-int main(int argc, char* argv[]) {
-  testing::InitGoogleTest(&argc, argv);
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
-  return RUN_ALL_TESTS();
 }

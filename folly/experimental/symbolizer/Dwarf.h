@@ -28,6 +28,8 @@
 namespace folly {
 namespace symbolizer {
 
+#if FOLLY_HAVE_DWARF && FOLLY_HAVE_ELF
+
 namespace detail {
 
 // A top level chunk in the .debug_info that contains a compilation unit.
@@ -44,7 +46,7 @@ struct DIEAbbreviation;
 
 struct AttributeSpec;
 struct Attribute;
-struct CodeLocation;
+struct CallLocation;
 
 } // namespace detail
 
@@ -85,14 +87,20 @@ class Dwarf {
    * More than one location info may exist if current frame is an inline
    * function call.
    */
-  static const uint32_t kMaxInlineLocationInfoPerFrame = 3;
+  static const uint32_t kMaxInlineLocationInfoPerFrame = 10;
 
-  /** Find the file and line number information corresponding to address. */
+  /**
+   * Find the file and line number information corresponding to address.
+   * If `eachParameterName` is provided, the callback will be invoked once
+   * for each parameter of the function.
+   */
   bool findAddress(
       uintptr_t address,
       LocationInfoMode mode,
       LocationInfo& info,
-      folly::Range<SymbolizedFrame*> inlineFrames = {}) const;
+      folly::Range<SymbolizedFrame*> inlineFrames = {},
+      folly::FunctionRef<void(const folly::StringPiece name)>
+          eachParameterName = {}) const;
 
  private:
   using AttributeValue = boost::variant<uint64_t, folly::StringPiece>;
@@ -109,24 +117,33 @@ class Dwarf {
   class LineNumberVM;
 
   /**
-   * Finds location info (file and line) for a given address in the given
-   * compilation unit.
+   * Find the @locationInfo for @address in the compilation unit @cu.
+   *
+   * Best effort:
+   * - fills @inlineFrames if mode == FULL_WITH_INLINE,
+   * - calls @eachParameterName on the function parameters.
+   *
+   * if @checkAddress is true, we verify that the address is mapped to
+   * a range in this CU before running the line number VM
    */
   bool findLocation(
       uintptr_t address,
       const LocationInfoMode mode,
       detail::CompilationUnit& cu,
       LocationInfo& info,
-      folly::Range<SymbolizedFrame*> inlineFrames = {}) const;
+      folly::Range<SymbolizedFrame*> inlineFrames,
+      folly::FunctionRef<void(folly::StringPiece)> eachParameterName,
+      bool checkAddress = true) const;
 
   /**
    * Finds a subprogram debugging info entry that contains a given address among
    * children of given die. Depth first search.
    */
-  void findSubProgramDieForAddress(
+  bool findSubProgramDieForAddress(
       const detail::CompilationUnit& cu,
       const detail::Die& die,
       uint64_t address,
+      folly::Optional<uint64_t> baseAddrCU,
       detail::Die& subprogram) const;
 
   /**
@@ -136,18 +153,27 @@ class Dwarf {
   void findInlinedSubroutineDieForAddress(
       const detail::CompilationUnit& cu,
       const detail::Die& die,
+      const LineNumberVM& lineVM,
       uint64_t address,
-      folly::Range<detail::CodeLocation*>& isrLoc) const;
+      folly::Optional<uint64_t> baseAddrCU,
+      folly::Range<detail::CallLocation*> locations,
+      size_t& numFound) const;
 
-  static bool
-  findDebugInfoOffset(uintptr_t address, StringPiece aranges, uint64_t& offset);
+  static bool findDebugInfoOffset(
+      uintptr_t address, StringPiece aranges, uint64_t& offset);
 
   /** Get an ELF section by name. */
   folly::StringPiece getSection(const char* name) const;
 
   /** cu must exist during the life cycle of created detail::Die. */
-  detail::Die getDieAtOffset(const detail::CompilationUnit& cu, uint64_t offset)
-      const;
+  detail::Die getDieAtOffset(
+      const detail::CompilationUnit& cu, uint64_t offset) const;
+
+  /**
+   * Find the actual definition DIE instead of declaration for the given die.
+   */
+  detail::Die findDefinitionDie(
+      const detail::CompilationUnit& cu, const detail::Die& die) const;
 
   /**
    * Iterates over all children of a debugging info entry, calling the given
@@ -176,12 +202,28 @@ class Dwarf {
       const detail::Die& die,
       folly::FunctionRef<bool(const detail::Attribute& die)> f) const;
 
+  template <class T>
+  folly::Optional<T> getAttribute(
+      const detail::CompilationUnit& cu,
+      const detail::Die& die,
+      uint64_t attrName) const;
+  /**
+   * Check if the given address is in the range list at the given offset in
+   * .debug_ranges.
+   */
+  bool isAddrInRangeList(
+      uint64_t address,
+      folly::Optional<uint64_t> baseAddr,
+      size_t offset,
+      uint8_t addrSize) const;
+
   const ElfFile* elf_;
   const folly::StringPiece debugInfo_; // .debug_info
   const folly::StringPiece debugAbbrev_; // .debug_abbrev
   const folly::StringPiece debugLine_; // .debug_line
   const folly::StringPiece debugStr_; // .debug_str
   const folly::StringPiece debugAranges_; // .debug_aranges
+  const folly::StringPiece debugRanges_; // .debug_ranges
 };
 
 class Dwarf::Section {
@@ -197,9 +239,7 @@ class Dwarf::Section {
   bool next(folly::StringPiece& chunk);
 
   /** Is the current chunk 64 bit? */
-  bool is64Bit() const {
-    return is64Bit_;
-  }
+  bool is64Bit() const { return is64Bit_; }
 
  private:
   // Yes, 32- and 64- bit sections may coexist.  Yikes!
@@ -210,8 +250,7 @@ class Dwarf::Section {
 class Dwarf::LineNumberVM {
  public:
   LineNumberVM(
-      folly::StringPiece data,
-      folly::StringPiece compilationDirectory);
+      folly::StringPiece data, folly::StringPiece compilationDirectory);
 
   bool findAddress(uintptr_t target, Path& file, uint64_t& line);
 
@@ -294,6 +333,8 @@ class Dwarf::LineNumberVM {
   uint64_t isa_;
   uint64_t discriminator_;
 };
+
+#endif
 
 } // namespace symbolizer
 } // namespace folly

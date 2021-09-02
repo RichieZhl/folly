@@ -22,13 +22,9 @@ struct AtomicBatchDispatcher<InputT, ResultT>::DispatchBaton {
   DispatchBaton(DispatchFunctionT&& dispatchFunction)
       : expectedCount_(0), dispatchFunction_(std::move(dispatchFunction)) {}
 
-  ~DispatchBaton() {
-    fulfillPromises();
-  }
+  ~DispatchBaton() { fulfillPromises(); }
 
-  void reserve(size_t numEntries) {
-    optEntries_.reserve(numEntries);
-  }
+  void reserve(size_t numEntries) { optEntries_.reserve(numEntries); }
 
   void setExceptionWrapper(folly::exception_wrapper&& exWrapper) {
     exceptionWrapper_ = std::move(exWrapper);
@@ -66,8 +62,7 @@ struct AtomicBatchDispatcher<InputT, ResultT>::DispatchBaton {
 
   template <typename TException>
   void setExceptionResults(
-      const TException& ex,
-      std::exception_ptr eptr = std::exception_ptr()) {
+      const TException& ex, std::exception_ptr eptr = std::exception_ptr()) {
     auto exceptionWrapper =
         eptr ? exception_wrapper(eptr, ex) : exception_wrapper(ex);
     return setExceptionResults(exceptionWrapper);
@@ -148,8 +143,7 @@ struct AtomicBatchDispatcher<InputT, ResultT>::DispatchBaton {
 
 template <typename InputT, typename ResultT>
 AtomicBatchDispatcher<InputT, ResultT>::Token::Token(
-    std::shared_ptr<DispatchBaton> baton,
-    size_t sequenceNumber)
+    std::shared_ptr<DispatchBaton> baton, size_t sequenceNumber)
     : baton_(std::move(baton)), sequenceNumber_(sequenceNumber) {}
 
 template <typename InputT, typename ResultT>

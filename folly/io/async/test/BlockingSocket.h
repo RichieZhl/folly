@@ -23,8 +23,8 @@
 #include <folly/net/NetworkSocket.h>
 
 class BlockingSocket : public folly::AsyncSocket::ConnectCallback,
-                       public folly::AsyncTransportWrapper::ReadCallback,
-                       public folly::AsyncTransportWrapper::WriteCallback {
+                       public folly::AsyncTransport::ReadCallback,
+                       public folly::AsyncTransport::WriteCallback {
  public:
   explicit BlockingSocket(folly::NetworkSocket fd)
       : sock_(new folly::AsyncSocket(&eventBase_, fd)) {}
@@ -42,33 +42,24 @@ class BlockingSocket : public folly::AsyncSocket::ConnectCallback,
     sock_->attachEventBase(&eventBase_);
   }
 
-  void enableTFO() {
-    sock_->enableTFO();
-  }
+  void enableTFO() { sock_->enableTFO(); }
 
-  void setEorTracking(bool track) {
-    sock_->setEorTracking(track);
-  }
+  void setEorTracking(bool track) { sock_->setEorTracking(track); }
 
-  void setAddress(folly::SocketAddress address) {
-    address_ = address;
-  }
+  void setAddress(folly::SocketAddress address) { address_ = address; }
 
   void open(
       std::chrono::milliseconds timeout = std::chrono::milliseconds::zero()) {
-    sock_->connect(this, address_, timeout.count());
+    DCHECK_LE(timeout.count(), std::numeric_limits<int>::max());
+    sock_->connect(this, address_, folly::to_narrow(timeout.count()));
     eventBase_.loop();
-    if (err_.hasValue()) {
+    if (err_.has_value()) {
       throw err_.value();
     }
   }
 
-  void close() {
-    sock_->close();
-  }
-  void closeWithReset() {
-    sock_->closeWithReset();
-  }
+  void close() { sock_->close(); }
+  void closeWithReset() { sock_->closeWithReset(); }
 
   int32_t write(
       uint8_t const* buf,
@@ -76,10 +67,21 @@ class BlockingSocket : public folly::AsyncSocket::ConnectCallback,
       folly::WriteFlags flags = folly::WriteFlags::NONE) {
     sock_->write(this, buf, len, flags);
     eventBase_.loop();
-    if (err_.hasValue()) {
+    if (err_.has_value()) {
       throw err_.value();
     }
-    return len;
+    return folly::to_narrow(folly::to_signed(len));
+  }
+
+  void writev(
+      const iovec* vec,
+      size_t count,
+      folly::WriteFlags flags = folly::WriteFlags::NONE) {
+    sock_->writev(this, vec, count, flags);
+    eventBase_.loop();
+    if (err_.has_value()) {
+      throw err_.value();
+    }
   }
 
   void flush() {}
@@ -88,17 +90,17 @@ class BlockingSocket : public folly::AsyncSocket::ConnectCallback,
     return readHelper(buf, len, true);
   }
 
-  int32_t read(uint8_t* buf, size_t len) {
-    return readHelper(buf, len, false);
+  int32_t read(uint8_t* buf, size_t len) { return readHelper(buf, len, false); }
+
+  int32_t readNoBlock(uint8_t* buf, size_t len) {
+    return readHelper(buf, len, false, EVLOOP_NONBLOCK);
   }
 
   folly::NetworkSocket getNetworkSocket() const {
     return sock_->getNetworkSocket();
   }
 
-  folly::AsyncSocket* getSocket() {
-    return sock_.get();
-  }
+  folly::AsyncSocket* getSocket() { return sock_.get(); }
 
   folly::AsyncSSLSocket* getSSLSocket() {
     return dynamic_cast<folly::AsyncSSLSocket*>(sock_.get());
@@ -138,28 +140,27 @@ class BlockingSocket : public folly::AsyncSocket::ConnectCallback,
     err_ = ex;
   }
 
-  int32_t readHelper(uint8_t* buf, size_t len, bool all) {
+  int32_t readHelper(uint8_t* buf, size_t len, bool all, int flags = 0) {
     if (!sock_->good()) {
       return 0;
     }
-
     readBuf_ = buf;
     readLen_ = len;
     sock_->setReadCB(this);
     while (!err_ && sock_->good() && readLen_ > 0) {
-      eventBase_.loopOnce();
+      eventBase_.loopOnce(flags);
       if (!all) {
         break;
       }
     }
     sock_->setReadCB(nullptr);
-    if (err_.hasValue()) {
+    if (err_.has_value()) {
       throw err_.value();
     }
     if (all && readLen_ > 0) {
       throw folly::AsyncSocketException(
           folly::AsyncSocketException::UNKNOWN, "eof");
     }
-    return len - readLen_;
+    return folly::to_narrow(folly::to_signed(len - readLen_));
   }
 };

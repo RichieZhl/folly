@@ -16,9 +16,9 @@
 
 #pragma once
 
-#include <folly/logging/AsyncLogWriter.h>
-
 #include <vector>
+
+#include <folly/logging/AsyncLogWriter.h>
 
 namespace folly {
 /**
@@ -50,15 +50,14 @@ class AsyncFileWriter : public AsyncLogWriter {
   /**
    * Get the output file.
    */
-  const folly::File& getFile() const {
-    return file_;
-  }
+  const folly::File& getFile() const { return file_; }
 
  private:
-  void writeToFile(std::vector<std::string>* ioQueue, size_t numDiscarded);
+  void writeToFile(
+      const std::vector<std::string>& ioQueue, size_t numDiscarded);
 
-  void performIO(std::vector<std::string>* ioQueue, size_t numDiscarded)
-      override;
+  void performIO(
+      const std::vector<std::string>& ioQueue, size_t numDiscarded) override;
 
   std::string getNumDiscardedMsg(size_t numDiscarded);
 

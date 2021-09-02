@@ -21,8 +21,6 @@
 #include <folly/logging/LoggerDB.h>
 #include <folly/portability/Unistd.h>
 
-using folly::StringPiece;
-
 namespace folly {
 
 ImmediateFileWriter::ImmediateFileWriter(StringPiece path)
@@ -32,8 +30,7 @@ ImmediateFileWriter::ImmediateFileWriter(folly::File&& file)
     : file_{std::move(file)} {}
 
 void ImmediateFileWriter::writeMessage(
-    StringPiece buffer,
-    uint32_t /* flags */) {
+    StringPiece buffer, uint32_t /* flags */) {
   // Write the data.
   // We are doing direct file descriptor writes here, so there is no buffering
   // of log message data.  Each message is immediately written to the output.

@@ -36,7 +36,16 @@ inline void ExecutorLoopController::schedule() {
   if (!executorKeepAlive_) {
     executorKeepAlive_ = getKeepAliveToken(executor_);
   }
-  executor_->add([this]() { return runLoop(); });
+  auto guard = localCallbackControlBlock_->trySchedule();
+  if (!guard) {
+    return;
+  }
+  executor_->add([this, guard = std::move(guard)]() {
+    if (guard->isCancelled()) {
+      return;
+    }
+    runLoop();
+  });
 }
 
 inline void ExecutorLoopController::runLoop() {
@@ -52,6 +61,16 @@ inline void ExecutorLoopController::runLoop() {
   }
 }
 
+inline void ExecutorLoopController::runEagerFiber(Fiber* fiber) {
+  if (!executorKeepAlive_) {
+    executorKeepAlive_ = getKeepAliveToken(executor_);
+  }
+  fm_->runEagerFiberImpl(fiber);
+  if (!fm_->hasTasks()) {
+    executorKeepAlive_.reset();
+  }
+}
+
 inline void ExecutorLoopController::scheduleThreadSafe() {
   executor_->add(
       [this, executorKeepAlive = getKeepAliveToken(executor_)]() mutable {
@@ -61,8 +80,8 @@ inline void ExecutorLoopController::scheduleThreadSafe() {
       });
 }
 
-inline HHWheelTimer& ExecutorLoopController::timer() {
-  return *timer_;
+inline HHWheelTimer* ExecutorLoopController::timer() {
+  return timer_.get();
 }
 
 } // namespace fibers

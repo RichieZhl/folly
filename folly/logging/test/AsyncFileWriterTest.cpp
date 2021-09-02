@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <folly/logging/AsyncFileWriter.h>
+
 #include <thread>
 
 #include <folly/Conv.h>
@@ -27,7 +29,6 @@
 #include <folly/futures/Promise.h>
 #include <folly/init/Init.h>
 #include <folly/lang/SafeAssert.h>
-#include <folly/logging/AsyncFileWriter.h>
 #include <folly/logging/Init.h>
 #include <folly/logging/LoggerDB.h>
 #include <folly/logging/xlog.h>
@@ -116,9 +117,7 @@ namespace {
 static std::vector<std::string>* internalWarnings;
 
 void handleLoggingError(
-    StringPiece /* file */,
-    int /* lineNumber */,
-    std::string&& msg) {
+    StringPiece /* file */, int /* lineNumber */, std::string&& msg) {
   internalWarnings->emplace_back(std::move(msg));
 }
 } // namespace
@@ -258,7 +257,7 @@ TEST(AsyncFileWriter, flush) {
   EXPECT_EQ(bytesRead, paddingSize);
 
   // Make sure flush completes successfully now
-  std::move(future).get(10ms);
+  std::move(future).get(50ms);
 }
 
 // A large-ish message suffix, just to consume space and help fill up
@@ -272,14 +271,11 @@ static constexpr StringPiece kMsgSuffix{
 class ReadStats {
  public:
   ReadStats()
-      : deadline_{steady_clock::now() +
-                  milliseconds{FLAGS_async_discard_timeout_msec}},
+      : deadline_{steady_clock::now() + milliseconds{FLAGS_async_discard_timeout_msec}},
         readSleepUS_{static_cast<uint64_t>(
             std::min(int64_t{0}, FLAGS_async_discard_read_sleep_usec))} {}
 
-  void clearSleepDuration() {
-    readSleepUS_.store(0);
-  }
+  void clearSleepDuration() { readSleepUS_.store(0); }
   std::chrono::microseconds getSleepUS() const {
     return std::chrono::microseconds{readSleepUS_.load()};
   }
@@ -389,9 +385,7 @@ class ReadStats {
     }
   }
 
-  void trailingData(StringPiece data) {
-    trailingData_ = data.str();
-  }
+  void trailingData(StringPiece data) { trailingData_ = data.str(); }
 
  private:
   struct ReaderData {
@@ -550,10 +544,7 @@ void readThread(folly::File&& file, ReadStats* stats) {
  * writeThread() writes a series of messages to the AsyncFileWriter
  */
 void writeThread(
-    AsyncFileWriter* writer,
-    size_t id,
-    uint32_t flags,
-    ReadStats* readStats) {
+    AsyncFileWriter* writer, size_t id, uint32_t flags, ReadStats* readStats) {
   size_t msgID = 0;
   while (true) {
     ++msgID;
@@ -618,12 +609,15 @@ TEST(AsyncFileWriter, discard) {
   readStats.check();
 }
 
+#ifndef _WIN32
 /**
  * Test that AsyncFileWriter operates correctly after a fork() in both the
  * parent and child processes.
  */
 TEST(AsyncFileWriter, fork) {
 #if FOLLY_HAVE_PTHREAD_ATFORK
+  SKIP_IF(folly::kIsSanitizeThread) << "Not supported for TSAN";
+
   TemporaryFile tmpFile{"logging_test"};
 
   // The number of messages to send before the fork and from each process
@@ -726,6 +720,8 @@ TEST(AsyncFileWriter, fork) {
  */
 TEST(AsyncFileWriter, crazyForks) {
 #if FOLLY_HAVE_PTHREAD_ATFORK
+  SKIP_IF(folly::kIsSanitizeThread) << "Not supported for TSAN";
+
   constexpr size_t numAsyncWriterThreads = 10;
   constexpr size_t numForkThreads = 5;
   constexpr size_t numForkIterations = 20;
@@ -803,3 +799,4 @@ TEST(AsyncFileWriter, crazyForks) {
   SKIP() << "pthread_atfork() is not supported on this platform";
 #endif // FOLLY_HAVE_PTHREAD_ATFORK
 }
+#endif // !_WIN32

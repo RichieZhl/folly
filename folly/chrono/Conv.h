@@ -31,6 +31,7 @@
 
 #include <folly/Conv.h>
 #include <folly/Expected.h>
+#include <folly/Utility.h>
 #include <folly/portability/SysTime.h>
 #include <folly/portability/SysTypes.h>
 
@@ -134,10 +135,11 @@ static Expected<std::pair<time_t, long>, ConversionCode> durationToPosixTime(
   if (sec.hasError()) {
     return makeUnexpected(sec.error());
   }
-  auto secTimeT = sec.value();
+  auto secTimeT = static_cast<time_t>(sec.value());
 
   auto remainder = duration.count() - (secTimeT * Denominator);
-  auto subsec = (remainder * SubsecondRatio::den) / Denominator;
+  long subsec =
+      static_cast<long>((remainder * SubsecondRatio::den) / Denominator);
   if (UNLIKELY(duration.count() < 0) && remainder != 0) {
     if (secTimeT == std::numeric_limits<time_t>::lowest()) {
       return makeUnexpected(ConversionCode::NEGATIVE_OVERFLOW);
@@ -250,9 +252,9 @@ Expected<std::pair<time_t, long>, ConversionCode> durationToPosixTime(
   if (duration.count() < minInput) {
     return makeUnexpected(ConversionCode::NEGATIVE_OVERFLOW);
   }
-  auto intermediate =
-      IntermediateType{static_cast<IntermediateRep>(duration.count()) *
-                       static_cast<IntermediateRep>(Period::num)};
+  auto intermediate = IntermediateType{
+      static_cast<IntermediateRep>(duration.count()) *
+      static_cast<IntermediateRep>(Period::num)};
 
   return durationToPosixTime<SubsecondRatio>(intermediate);
 }
@@ -338,8 +340,7 @@ struct CheckOverflowToDuration<true> {
       typename Seconds,
       typename Subseconds>
   static ConversionCode check(
-      Seconds /* seconds */,
-      Subseconds /* subseconds */) {
+      Seconds /* seconds */, Subseconds /* subseconds */) {
     static_assert(
         std::is_floating_point<typename Tgt::rep>::value, "incorrect usage");
     static_assert(
@@ -394,8 +395,9 @@ auto posixTimeToDuration(
   }
 
   if (std::is_floating_point<typename Tgt::rep>::value) {
-    return Tgt{typename Tgt::rep(seconds) +
-               (typename Tgt::rep(subseconds) / SubsecondRatio::den)};
+    return Tgt{
+        typename Tgt::rep(seconds) +
+        (typename Tgt::rep(subseconds) / SubsecondRatio::den)};
   }
 
   // If the value is negative, we have to round up a non-zero subseconds value
@@ -555,8 +557,7 @@ template <
     typename Seconds,
     typename Subseconds>
 Expected<Tgt, ConversionCode> tryPosixTimeToDuration(
-    Seconds seconds,
-    Subseconds subseconds) {
+    Seconds seconds, Subseconds subseconds) {
   static_assert(
       SubsecondRatio::num == 1, "subsecond numerator should always be 1");
 
@@ -569,7 +570,7 @@ Expected<Tgt, ConversionCode> tryPosixTimeToDuration(
       return makeUnexpected(ConversionCode::NEGATIVE_OVERFLOW);
     }
     seconds = seconds - 1 + overflowSeconds;
-    subseconds = remainder + SubsecondRatio::den;
+    subseconds = to_narrow(remainder + SubsecondRatio::den);
   } else if (UNLIKELY(subseconds >= SubsecondRatio::den)) {
     const auto overflowSeconds = (subseconds / SubsecondRatio::den);
     const auto remainder = (subseconds % SubsecondRatio::den);
@@ -577,7 +578,7 @@ Expected<Tgt, ConversionCode> tryPosixTimeToDuration(
       return makeUnexpected(ConversionCode::POSITIVE_OVERFLOW);
     }
     seconds += overflowSeconds;
-    subseconds = remainder;
+    subseconds = to_narrow(remainder);
   }
 
   return posixTimeToDuration<SubsecondRatio>(seconds, subseconds, Tgt{});

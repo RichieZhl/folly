@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+#include <folly/CPortability.h>
+#include <folly/DefaultKeepAliveExecutor.h>
+#include <folly/executors/CPUThreadPoolExecutor.h>
+#include <folly/executors/ThreadPoolExecutor.h>
+#include <folly/lang/Keep.h>
+
 #include <atomic>
 #include <memory>
 #include <thread>
@@ -26,7 +32,6 @@
 #include <folly/executors/EDFThreadPoolExecutor.h>
 #include <folly/executors/FutureExecutor.h>
 #include <folly/executors/IOThreadPoolExecutor.h>
-#include <folly/executors/ThreadPoolExecutor.h>
 #include <folly/executors/task_queue/LifoSemMPMCQueue.h>
 #include <folly/executors/task_queue/UnboundedBlockingQueue.h>
 #include <folly/executors/thread_factory/InitThreadFactory.h>
@@ -40,6 +45,20 @@ using namespace std::chrono;
 static Func burnMs(uint64_t ms) {
   return [ms]() { std::this_thread::sleep_for(milliseconds(ms)); };
 }
+
+static WorkerProvider* kWorkerProviderGlobal = nullptr;
+
+namespace folly {
+
+#if FOLLY_HAVE_WEAK_SYMBOLS
+FOLLY_KEEP std::unique_ptr<QueueObserverFactory> make_queue_observer_factory(
+    const std::string&, size_t, WorkerProvider* workerProvider) {
+  kWorkerProviderGlobal = workerProvider;
+  return {};
+}
+#endif
+
+} // namespace folly
 
 template <class TPE>
 static void basic() {
@@ -182,7 +201,7 @@ void destroy<IOThreadPoolExecutor>() {
   for (int i = 0; i < 10; i++) {
     tpe->add(f);
   }
-  tpe.clear();
+  tpe.reset();
   EXPECT_EQ(10, completed);
 }
 
@@ -266,14 +285,20 @@ template <class TPE>
 static void taskStats() {
   TPE tpe(1);
   std::atomic<int> c(0);
+  auto now = std::chrono::steady_clock::now();
   tpe.subscribeToTaskStats([&](ThreadPoolExecutor::TaskStats stats) {
     int i = c++;
+    EXPECT_LT(now, stats.enqueueTime);
     EXPECT_LT(milliseconds(0), stats.runTime);
     if (i == 1) {
       EXPECT_LT(milliseconds(0), stats.waitTime);
+      EXPECT_NE(0, stats.requestId);
+    } else {
+      EXPECT_EQ(0, stats.requestId);
     }
   });
   tpe.add(burnMs(10));
+  RequestContextScopeGuard rctx;
   tpe.add(burnMs(10));
   tpe.join();
   EXPECT_EQ(2, c);
@@ -342,11 +367,12 @@ static void futureExecutor() {
     c++;
     EXPECT_NO_THROW(t.value());
   });
-  fe.addFuture([]() { throw std::runtime_error("oops"); })
-      .then([&](Try<Unit>&& t) {
-        c++;
-        EXPECT_THROW(t.value(), std::runtime_error);
-      });
+  fe.addFuture([]() {
+      throw std::runtime_error("oops");
+    }).then([&](Try<Unit>&& t) {
+    c++;
+    EXPECT_THROW(t.value(), std::runtime_error);
+  });
   // Test doing actual async work
   folly::Baton<> baton;
   fe.addFuture([&]() {
@@ -357,12 +383,11 @@ static void futureExecutor() {
       });
       t.detach();
       return p->getFuture();
-    })
-      .then([&](Try<int>&& t) {
-        EXPECT_EQ(42, t.value());
-        c++;
-        baton.post();
-      });
+    }).then([&](Try<int>&& t) {
+    EXPECT_EQ(42, t.value());
+    c++;
+    baton.post();
+  });
   baton.wait();
   fe.join();
   EXPECT_EQ(6, c);
@@ -407,21 +432,15 @@ TEST(ThreadPoolExecutorTest, PriorityPreemptionTest) {
 
 class TestObserver : public ThreadPoolExecutor::Observer {
  public:
-  void threadStarted(ThreadPoolExecutor::ThreadHandle*) override {
-    threads_++;
-  }
-  void threadStopped(ThreadPoolExecutor::ThreadHandle*) override {
-    threads_--;
-  }
+  void threadStarted(ThreadPoolExecutor::ThreadHandle*) override { threads_++; }
+  void threadStopped(ThreadPoolExecutor::ThreadHandle*) override { threads_--; }
   void threadPreviouslyStarted(ThreadPoolExecutor::ThreadHandle*) override {
     threads_++;
   }
   void threadNotYetStopped(ThreadPoolExecutor::ThreadHandle*) override {
     threads_--;
   }
-  void checkCalls() {
-    ASSERT_EQ(threads_, 0);
-  }
+  void checkCalls() { ASSERT_EQ(threads_, 0); }
 
  private:
   std::atomic<int> threads_{0};
@@ -583,36 +602,40 @@ class TestData : public folly::RequestData {
   explicit TestData(int data) : data_(data) {}
   ~TestData() override {}
 
-  bool hasCallback() override {
-    return false;
-  }
+  bool hasCallback() override { return false; }
 
   int data_;
 };
 
 TEST(ThreadPoolExecutorTest, RequestContext) {
-  CPUThreadPoolExecutor executor(1);
-
   RequestContextScopeGuard rctx; // create new request context for this scope
   EXPECT_EQ(nullptr, RequestContext::get()->getContextData("test"));
   RequestContext::get()->setContextData("test", std::make_unique<TestData>(42));
   auto data = RequestContext::get()->getContextData("test");
   EXPECT_EQ(42, dynamic_cast<TestData*>(data)->data_);
 
-  executor.add([] {
-    auto data2 = RequestContext::get()->getContextData("test");
-    ASSERT_TRUE(data2 != nullptr);
-    EXPECT_EQ(42, dynamic_cast<TestData*>(data2)->data_);
-  });
+  struct VerifyRequestContext {
+    ~VerifyRequestContext() {
+      auto data2 = RequestContext::get()->getContextData("test");
+      EXPECT_TRUE(data2 != nullptr);
+      if (data2 != nullptr) {
+        EXPECT_EQ(42, dynamic_cast<TestData*>(data2)->data_);
+      }
+    }
+  };
+
+  {
+    CPUThreadPoolExecutor executor(1);
+    executor.add([] { VerifyRequestContext(); });
+    executor.add([x = VerifyRequestContext()] {});
+  }
 }
 
 std::atomic<int> g_sequence{};
 
 struct SlowMover {
   explicit SlowMover(bool slow_ = false) : slow(slow_) {}
-  SlowMover(SlowMover&& other) noexcept {
-    *this = std::move(other);
-  }
+  SlowMover(SlowMover&& other) noexcept { *this = std::move(other); }
   SlowMover& operator=(SlowMover&& other) noexcept {
     ++g_sequence;
     slow = other.slow;
@@ -917,6 +940,116 @@ TEST(ThreadPoolExecutorTest, AddPerf) {
   e.stop();
 }
 
+class ExecutorWorkerProviderTest : public ::testing::Test {
+ protected:
+  void SetUp() override { kWorkerProviderGlobal = nullptr; }
+  void TearDown() override { kWorkerProviderGlobal = nullptr; }
+};
+
+TEST_F(ExecutorWorkerProviderTest, ThreadCollectorBasicTest) {
+  // Start 4 threads and have all of them work on a task.
+  // Then invoke the ThreadIdCollector::collectThreadIds()
+  // method to capture the set of active thread ids.
+  boost::barrier barrier{5};
+  Synchronized<std::vector<pid_t>> expectedTids;
+  auto task = [&]() {
+    expectedTids.wlock()->push_back(folly::getOSThreadID());
+    barrier.wait();
+  };
+  CPUThreadPoolExecutor e(4);
+  for (int i = 0; i < 4; ++i) {
+    e.add(task);
+  }
+  barrier.wait();
+  {
+    const auto threadIdsWithKA = kWorkerProviderGlobal->collectThreadIds();
+    const auto& ids = threadIdsWithKA.threadIds;
+    auto locked = expectedTids.rlock();
+    EXPECT_EQ(ids.size(), locked->size());
+    EXPECT_TRUE(std::is_permutation(ids.begin(), ids.end(), locked->begin()));
+  }
+  e.join();
+}
+
+TEST_F(ExecutorWorkerProviderTest, ThreadCollectorMultipleInvocationTest) {
+  // Run some tasks via the executor and invoke
+  // WorkerProvider::collectThreadIds() at least twice to make sure that there
+  // is no deadlock in repeated invocations.
+  CPUThreadPoolExecutor e(1);
+  e.add([&]() {});
+  {
+    auto idsWithKA1 = kWorkerProviderGlobal->collectThreadIds();
+    auto idsWithKA2 = kWorkerProviderGlobal->collectThreadIds();
+    auto& ids1 = idsWithKA1.threadIds;
+    auto& ids2 = idsWithKA2.threadIds;
+    EXPECT_EQ(ids1.size(), 1);
+    EXPECT_EQ(ids1.size(), ids2.size());
+    EXPECT_EQ(ids1, ids2);
+  }
+  // Add some more threads and schedule tasks while the collector
+  // is capturing thread Ids.
+  std::array<folly::Baton<>, 4> bats;
+  {
+    auto idsWithKA1 = kWorkerProviderGlobal->collectThreadIds();
+    e.setNumThreads(4);
+    for (size_t i = 0; i < 4; ++i) {
+      e.add([i, &bats]() { bats[i].wait(); });
+    }
+    for (auto& bat : bats) {
+      bat.post();
+    }
+    auto idsWithKA2 = kWorkerProviderGlobal->collectThreadIds();
+    auto& ids1 = idsWithKA1.threadIds;
+    auto& ids2 = idsWithKA2.threadIds;
+    EXPECT_EQ(ids1.size(), 1);
+    EXPECT_EQ(ids2.size(), 4);
+  }
+  e.join();
+}
+
+TEST_F(ExecutorWorkerProviderTest, ThreadCollectorBlocksThreadExitTest) {
+  // We need to ensure that the collector's keep alive effectively
+  // blocks the executor's threads from exiting. This is done by verifying
+  // that a call to reduce the worker count via setNumThreads() does not
+  // actually reduce the workers (kills threads) while  the keep alive is
+  // in scope.
+  constexpr size_t kNumThreads = 4;
+  std::array<folly::Baton<>, kNumThreads> bats;
+  CPUThreadPoolExecutor e(kNumThreads);
+  for (size_t i = 0; i < kNumThreads; ++i) {
+    e.add([i, &bats]() { bats[i].wait(); });
+  }
+  Baton<> baton;
+  Baton<> threadCountBaton;
+  auto bgCollector = std::thread([&]() {
+    {
+      auto idsWithKA = kWorkerProviderGlobal->collectThreadIds();
+      baton.post();
+      // Since this thread is holding the KeepAlive, it should block
+      // the main thread's `setNumThreads()` call which is trying to
+      // reduce the thread count of the executor. We verify that by
+      // checking that the baton isn't posted after a 100ms wait.
+      auto posted =
+          threadCountBaton.try_wait_for(std::chrono::milliseconds(100));
+      EXPECT_FALSE(posted);
+      auto& ids = idsWithKA.threadIds;
+      // The thread count should still be 4 since the collector's
+      // keep alive is active. To further verify that the threads are
+      EXPECT_EQ(ids.size(), kNumThreads);
+    }
+  });
+  baton.wait();
+  for (auto& bat : bats) {
+    bat.post();
+  }
+  e.setNumThreads(2);
+  threadCountBaton.post();
+  bgCollector.join();
+  // The thread count should now be reduced to 2.
+  EXPECT_EQ(e.numThreads(), 2);
+  e.join();
+}
+
 template <typename TPE>
 static void WeakRefTest() {
   // test that adding a .then() after we have
@@ -929,7 +1062,7 @@ static void WeakRefTest() {
             .via(&fe)
             .thenValue([](auto&&) { burnMs(100)(); })
             .thenValue([&](auto&&) { ++counter; })
-            .via(fe.weakRef())
+            .via(getWeakRef(fe))
             .thenValue([](auto&&) { burnMs(100)(); })
             .thenValue([&](auto&&) { ++counter; });
   }
@@ -979,6 +1112,13 @@ static void virtualExecutorTest() {
   EXPECT_EQ(2, counter);
 }
 
+class SingleThreadedCPUThreadPoolExecutor : public CPUThreadPoolExecutor,
+                                            public SequencedExecutor {
+ public:
+  explicit SingleThreadedCPUThreadPoolExecutor(size_t)
+      : CPUThreadPoolExecutor(1) {}
+};
+
 TEST(ThreadPoolExecutorTest, WeakRefTestIO) {
   WeakRefTest<IOThreadPoolExecutor>();
 }
@@ -991,6 +1131,18 @@ TEST(ThreadPoolExecutorTest, WeakRefTestEDF) {
   WeakRefTest<EDFThreadPoolExecutor>();
 }
 
+TEST(ThreadPoolExecutorTest, WeakRefTestSingleThreadedCPU) {
+  WeakRefTest<SingleThreadedCPUThreadPoolExecutor>();
+}
+
+TEST(ThreadPoolExecutorTest, WeakRefTestSequential) {
+  SingleThreadedCPUThreadPoolExecutor ex(1);
+  auto weakRef = getWeakRef(ex);
+  EXPECT_TRUE((std::is_same_v<
+               decltype(weakRef),
+               Executor::KeepAlive<SequencedExecutor>>));
+}
+
 TEST(ThreadPoolExecutorTest, VirtualExecutorTestIO) {
   virtualExecutorTest<IOThreadPoolExecutor>();
 }
@@ -1001,4 +1153,48 @@ TEST(ThreadPoolExecutorTest, VirtualExecutorTestCPU) {
 
 TEST(ThreadPoolExecutorTest, VirtualExecutorTestEDF) {
   virtualExecutorTest<EDFThreadPoolExecutor>();
+}
+
+// Test use of guard inside executors
+template <class TPE>
+static void currentThreadTest(folly::StringPiece executorName) {
+  folly::Optional<ExecutorBlockingContext> ctx{};
+  TPE tpe(1, std::make_shared<NamedThreadFactory>(executorName));
+  tpe.add([&ctx]() { ctx = getExecutorBlockingContext(); });
+  tpe.join();
+  EXPECT_EQ(ctx->tag, executorName);
+}
+
+// Test the nesting of the permit guard
+template <class TPE>
+static void currentThreadTestDisabled(folly::StringPiece executorName) {
+  folly::Optional<ExecutorBlockingContext> ctxPermit{};
+  folly::Optional<ExecutorBlockingContext> ctxForbid{};
+  TPE tpe(1, std::make_shared<NamedThreadFactory>(executorName));
+  tpe.add([&]() {
+    {
+      // Nest the guard that permits blocking
+      ExecutorBlockingGuard guard{ExecutorBlockingGuard::PermitTag{}};
+      ctxPermit = getExecutorBlockingContext();
+    }
+    ctxForbid = getExecutorBlockingContext();
+  });
+  tpe.join();
+  EXPECT_TRUE(!ctxPermit.has_value());
+  EXPECT_EQ(ctxForbid->tag, executorName);
+}
+
+TEST(ThreadPoolExecutorTest, CPUCurrentThreadExecutor) {
+  currentThreadTest<CPUThreadPoolExecutor>("CPU-ExecutorName");
+  currentThreadTestDisabled<CPUThreadPoolExecutor>("CPU-ExecutorName");
+}
+
+TEST(ThreadPoolExecutorTest, IOCurrentThreadExecutor) {
+  currentThreadTest<IOThreadPoolExecutor>("IO-ExecutorName");
+  currentThreadTestDisabled<IOThreadPoolExecutor>("IO-ExecutorName");
+}
+
+TEST(ThreadPoolExecutorTest, EDFCurrentThreadExecutor) {
+  currentThreadTest<EDFThreadPoolExecutor>("EDF-ExecutorName");
+  currentThreadTestDisabled<EDFThreadPoolExecutor>("EDF-ExecutorName");
 }

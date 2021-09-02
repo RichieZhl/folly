@@ -18,11 +18,14 @@
 
 #include <boost/thread/barrier.hpp>
 
+#include <folly/DefaultKeepAliveExecutor.h>
 #include <folly/Random.h>
+#include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/executors/ManualExecutor.h>
 #include <folly/futures/Future.h>
 #include <folly/portability/GTest.h>
 #include <folly/small_vector.h>
+#include <folly/synchronization/Baton.h>
 
 using namespace folly;
 
@@ -79,7 +82,7 @@ TEST(Collect, collectAll) {
     promises[3].setException(eggs);
 
     EXPECT_TRUE(allf.isReady());
-    EXPECT_FALSE(allf.getTry().hasException());
+    EXPECT_FALSE(allf.result().hasException());
 
     auto& results = allf.value();
     EXPECT_EQ(42, results[0].value());
@@ -97,8 +100,8 @@ TEST(Collect, collectAll) {
       futures.push_back(p.getFuture());
     }
 
-    auto allf = collectAllSemiFuture(futures).toUnsafeFuture().thenTry(
-        [](Try<std::vector<Try<Unit>>>&& ts) {
+    auto allf =
+        collectAllUnsafe(futures).thenTry([](Try<std::vector<Try<Unit>>>&& ts) {
           for (auto& f : ts.value()) {
             f.value();
           }
@@ -112,7 +115,88 @@ TEST(Collect, collectAll) {
   }
 }
 
-TEST(Collect, collectAllSemiFutureInline) {
+TEST(Collect, collectAllUnsafe) {
+  // returns a vector variant
+  {
+    std::vector<Promise<int>> promises(10);
+    std::vector<Future<int>> futures;
+
+    for (auto& p : promises) {
+      futures.push_back(p.getFuture());
+    }
+
+    auto allf = collectAllUnsafe(futures);
+
+    std::shuffle(promises.begin(), promises.end(), rng);
+    for (auto& p : promises) {
+      EXPECT_FALSE(allf.isReady());
+      p.setValue(42);
+    }
+
+    EXPECT_TRUE(allf.isReady());
+    auto& results = allf.value();
+    for (auto& t : results) {
+      EXPECT_EQ(42, t.value());
+    }
+  }
+
+  // check error semantics
+  {
+    std::vector<Promise<int>> promises(4);
+    std::vector<Future<int>> futures;
+
+    for (auto& p : promises) {
+      futures.push_back(p.getFuture());
+    }
+
+    auto allf = collectAllUnsafe(futures);
+
+    promises[0].setValue(42);
+    promises[1].setException(eggs);
+
+    EXPECT_FALSE(allf.isReady());
+
+    promises[2].setValue(42);
+
+    EXPECT_FALSE(allf.isReady());
+
+    promises[3].setException(eggs);
+
+    EXPECT_TRUE(allf.isReady());
+    EXPECT_FALSE(allf.result().hasException());
+
+    auto& results = allf.value();
+    EXPECT_EQ(42, results[0].value());
+    EXPECT_TRUE(results[1].hasException());
+    EXPECT_EQ(42, results[2].value());
+    EXPECT_TRUE(results[3].hasException());
+  }
+
+  // check that futures are ready in thenValue()
+  {
+    std::vector<Promise<Unit>> promises(10);
+    std::vector<Future<Unit>> futures;
+
+    for (auto& p : promises) {
+      futures.push_back(p.getFuture());
+    }
+
+    auto allf =
+        collectAllUnsafe(futures).thenTry([](Try<std::vector<Try<Unit>>>&& ts) {
+          for (auto& f : ts.value()) {
+            f.value();
+          }
+        });
+
+    std::shuffle(promises.begin(), promises.end(), rng);
+    for (auto& p : promises) {
+      p.setValue();
+    }
+    EXPECT_TRUE(allf.isReady());
+  }
+}
+
+TEST(Collect, collectAllInline) {
   // inline future collection on same executor
   {
     ManualExecutor x;
@@ -121,8 +205,7 @@ TEST(Collect, collectAllSemiFutureInline) {
     futures.emplace_back(makeFuture(42).via(&x));
     futures.emplace_back(makeFuture(42).via(&x));
 
-    auto allf =
-        collectAllSemiFuture(futures).via(&x).thenTryInline([](auto&&) {});
+    auto allf = collectAll(futures).via(&x).thenTryInline([](auto&&) {});
     EXPECT_FALSE(allf.isReady());
     EXPECT_EQ(3, x.run());
     EXPECT_TRUE(allf.isReady());
@@ -135,7 +218,7 @@ TEST(Collect, collectAllSemiFutureInline) {
     futures.emplace_back(makeSemiFuture(42).defer([](auto&&) { return 42; }));
     futures.emplace_back(makeSemiFuture(42).defer([](auto&&) { return 42; }));
 
-    auto allf = collectAllSemiFuture(futures).defer([](auto&&) {}).via(&x);
+    auto allf = collectAll(futures).defer([](auto&&) {}).via(&x);
     EXPECT_FALSE(allf.isReady());
     EXPECT_EQ(3, x.run());
     EXPECT_TRUE(allf.isReady());
@@ -147,7 +230,7 @@ TEST(Collect, collectAllSemiFutureInline) {
     futures.emplace_back(makeFuture(42).via(&x1));
     futures.emplace_back(makeFuture(42).via(&x2));
 
-    auto allf = collectAllSemiFuture(futures).defer([](auto&&) {}).via(&x1);
+    auto allf = collectAll(futures).defer([](auto&&) {}).via(&x1);
     EXPECT_FALSE(allf.isReady());
     EXPECT_EQ(1, x2.run());
     EXPECT_FALSE(allf.isReady());
@@ -162,7 +245,7 @@ TEST(Collect, collectAllSemiFutureInline) {
     futures.emplace_back(makeFuture(42).via(&x1));
     futures.emplace_back(makeFuture(42).via(&x2));
 
-    auto allf = collectAllSemiFuture(futures).defer([](auto&&) {}).via(&x1);
+    auto allf = collectAll(futures).defer([](auto&&) {}).via(&x1);
     EXPECT_FALSE(allf.isReady());
     EXPECT_EQ(1, x1.run());
     EXPECT_FALSE(allf.isReady());
@@ -376,7 +459,7 @@ TEST(Collect, collectAny) {
       EXPECT_FALSE(f.isReady());
     }
 
-    auto anyf = collectAnySemiFuture(futures);
+    auto anyf = collectAny(futures);
 
     /* futures were moved in, so these are invalid now */
     EXPECT_FALSE(anyf.isReady());
@@ -412,22 +495,6 @@ TEST(Collect, collectAny) {
     promises[3].setException(eggs);
     EXPECT_TRUE(anyf.isReady());
     EXPECT_TRUE(anyf.value().second.hasException());
-  }
-
-  // thenValue()
-  {
-    std::vector<Promise<int>> promises(10);
-    std::vector<Future<int>> futures;
-
-    for (auto& p : promises) {
-      futures.push_back(p.getFuture());
-    }
-
-    auto anyf = collectAny(futures).thenValue(
-        [](std::pair<size_t, Try<int>> p) { EXPECT_EQ(42, p.second.value()); });
-
-    promises[3].setValue(42);
-    EXPECT_TRUE(anyf.isReady());
   }
 }
 
@@ -530,7 +597,16 @@ TEST(Collect, alreadyCompleted) {
       fs.push_back(makeFuture());
     }
 
-    collectAllSemiFuture(fs).toUnsafeFuture().thenValue(
+    collectAllUnsafe(fs).thenValue(
+        [&](std::vector<Try<Unit>> ts) { EXPECT_EQ(fs.size(), ts.size()); });
+  }
+  {
+    std::vector<Future<Unit>> fs;
+    for (int i = 0; i < 10; i++) {
+      fs.push_back(makeFuture());
+    }
+
+    collectAllUnsafe(fs).thenValue(
         [&](std::vector<Try<Unit>> ts) { EXPECT_EQ(fs.size(), ts.size()); });
   }
   {
@@ -539,9 +615,10 @@ TEST(Collect, alreadyCompleted) {
       fs.push_back(makeFuture(i));
     }
 
-    collectAny(fs).thenValue([&](std::pair<size_t, Try<int>> p) {
-      EXPECT_EQ(p.first, p.second.value());
-    });
+    collectAny(fs).toUnsafeFuture().thenValue(
+        [&](std::pair<size_t, Try<int>> p) {
+          EXPECT_EQ(p.first, p.second.value());
+        });
   }
 }
 
@@ -774,8 +851,27 @@ TEST(Collect, collectAllVariadic) {
   Future<bool> fb = pb.getFuture();
   Future<int> fi = pi.getFuture();
   bool flag = false;
-  collectAllSemiFuture(std::move(fb), std::move(fi))
-      .toUnsafeFuture()
+  collectAllUnsafe(std::move(fb), std::move(fi))
+      .thenValue([&](std::tuple<Try<bool>, Try<int>> tup) {
+        flag = true;
+        EXPECT_TRUE(std::get<0>(tup).hasValue());
+        EXPECT_EQ(std::get<0>(tup).value(), true);
+        EXPECT_TRUE(std::get<1>(tup).hasValue());
+        EXPECT_EQ(std::get<1>(tup).value(), 42);
+      });
+  pb.setValue(true);
+  EXPECT_FALSE(flag);
+  pi.setValue(42);
+  EXPECT_TRUE(flag);
+}
+
+TEST(Collect, collectAllUnsafeVariadic) {
+  Promise<bool> pb;
+  Promise<int> pi;
+  Future<bool> fb = pb.getFuture();
+  Future<int> fi = pi.getFuture();
+  bool flag = false;
+  collectAllUnsafe(std::move(fb), std::move(fi))
       .thenValue([&](std::tuple<Try<bool>, Try<int>> tup) {
         flag = true;
         EXPECT_TRUE(std::get<0>(tup).hasValue());
@@ -795,14 +891,13 @@ TEST(Collect, collectAllVariadicReferences) {
   Future<bool> fb = pb.getFuture();
   Future<int> fi = pi.getFuture();
   bool flag = false;
-  collectAllSemiFuture(fb, fi).toUnsafeFuture().thenValue(
-      [&](std::tuple<Try<bool>, Try<int>> tup) {
-        flag = true;
-        EXPECT_TRUE(std::get<0>(tup).hasValue());
-        EXPECT_EQ(std::get<0>(tup).value(), true);
-        EXPECT_TRUE(std::get<1>(tup).hasValue());
-        EXPECT_EQ(std::get<1>(tup).value(), 42);
-      });
+  collectAllUnsafe(fb, fi).thenValue([&](std::tuple<Try<bool>, Try<int>> tup) {
+    flag = true;
+    EXPECT_TRUE(std::get<0>(tup).hasValue());
+    EXPECT_EQ(std::get<0>(tup).value(), true);
+    EXPECT_TRUE(std::get<1>(tup).hasValue());
+    EXPECT_EQ(std::get<1>(tup).value(), 42);
+  });
   pb.setValue(true);
   EXPECT_FALSE(flag);
   pi.setValue(42);
@@ -815,8 +910,7 @@ TEST(Collect, collectAllVariadicWithException) {
   Future<bool> fb = pb.getFuture();
   Future<int> fi = pi.getFuture();
   bool flag = false;
-  collectAllSemiFuture(std::move(fb), std::move(fi))
-      .toUnsafeFuture()
+  collectAllUnsafe(std::move(fb), std::move(fi))
       .thenValue([&](std::tuple<Try<bool>, Try<int>> tup) {
         flag = true;
         EXPECT_TRUE(std::get<0>(tup).hasValue());
@@ -837,6 +931,25 @@ TEST(Collect, collectVariadic) {
   Future<int> fi = pi.getFuture();
   bool flag = false;
   collect(std::move(fb), std::move(fi))
+      .toUnsafeFuture()
+      .thenValue([&](std::tuple<bool, int> tup) {
+        flag = true;
+        EXPECT_EQ(std::get<0>(tup), true);
+        EXPECT_EQ(std::get<1>(tup), 42);
+      });
+  pb.setValue(true);
+  EXPECT_FALSE(flag);
+  pi.setValue(42);
+  EXPECT_TRUE(flag);
+}
+
+TEST(Collect, collectUnsafeVariadic) {
+  Promise<bool> pb;
+  Promise<int> pi;
+  Future<bool> fb = pb.getFuture();
+  Future<int> fi = pi.getFuture();
+  bool flag = false;
+  collectUnsafe(std::move(fb), std::move(fi))
       .thenValue([&](std::tuple<bool, int> tup) {
         flag = true;
         EXPECT_EQ(std::get<0>(tup), true);
@@ -858,7 +971,7 @@ TEST(Collect, collectVariadicWithException) {
   EXPECT_FALSE(f.isReady());
   pi.setException(eggs);
   EXPECT_TRUE(f.isReady());
-  EXPECT_TRUE(f.getTry().hasException());
+  EXPECT_TRUE(f.result().hasException());
   EXPECT_THROW(std::move(f).get(), eggs_t);
 }
 
@@ -877,4 +990,55 @@ TEST(Collect, noDefaultConstructor) {
   auto f2 = makeFuture(A(2));
 
   auto f = collect(std::move(f1), std::move(f2));
+}
+
+TEST(Collect, CollectVariadicWithDestroyedWeakRef) {
+  auto one = std::make_unique<folly::CPUThreadPoolExecutor>(1);
+  auto two = std::make_unique<folly::CPUThreadPoolExecutor>(1);
+  auto reachedFirstCallback = folly::Baton<>{};
+  auto hasExecutorBeenDestroyed = folly::Baton<>{};
+
+  auto future = folly::collect(
+      folly::makeSemiFuture(),
+      folly::makeSemiFuture()
+          .via(one.get())
+          .thenValue([&](auto) {
+            reachedFirstCallback.post();
+            hasExecutorBeenDestroyed.wait();
+          })
+          .via(two->weakRef())
+          .thenValue([](auto) {}),
+      folly::makeSemiFuture());
+
+  reachedFirstCallback.wait();
+  two.reset();
+  hasExecutorBeenDestroyed.post();
+
+  EXPECT_THROW(std::move(future).get(), folly::BrokenPromise);
+}
+
+TEST(Collect, CollectRangeWithDestroyedWeakRef) {
+  auto one = std::make_unique<folly::CPUThreadPoolExecutor>(1);
+  auto two = std::make_unique<folly::CPUThreadPoolExecutor>(1);
+  auto reachedFirstCallback = folly::Baton<>{};
+  auto hasExecutorBeenDestroyed = folly::Baton<>{};
+
+  auto futures = std::vector<folly::SemiFuture<folly::Unit>>{};
+  futures.push_back(folly::makeSemiFuture());
+  futures.push_back(folly::makeSemiFuture()
+                        .via(one.get())
+                        .thenValue([&](auto) {
+                          reachedFirstCallback.post();
+                          hasExecutorBeenDestroyed.wait();
+                        })
+                        .via(two->weakRef())
+                        .thenValue([](auto) {}));
+  futures.push_back(folly::makeSemiFuture());
+  auto future = folly::collect(futures.begin(), futures.end());
+
+  reachedFirstCallback.wait();
+  two.reset();
+  hasExecutorBeenDestroyed.post();
+
+  EXPECT_THROW(std::move(future).get(), folly::BrokenPromise);
 }

@@ -16,7 +16,12 @@
 
 #include <folly/experimental/EnvUtil.h>
 
+#include <spawn.h>
+
+#include <system_error>
+
 #include <boost/algorithm/string.hpp>
+
 #include <folly/Memory.h>
 #include <folly/Subprocess.h>
 #include <folly/container/Array.h>
@@ -24,9 +29,8 @@
 #include <folly/portability/GFlags.h>
 #include <folly/portability/GTest.h>
 #include <folly/portability/Stdlib.h>
+
 #include <glog/logging.h>
-#include <spawn.h>
-#include <system_error>
 
 using namespace folly;
 using folly::experimental::EnvironmentState;
@@ -74,10 +78,10 @@ TEST(EnvVarSaverTest, Movable) {
   auto value = std::string{getenv(key)};
   Optional<EnvVarSaver> pSaver2;
   pSaver2.emplace(std::move(*pSaver1));
-  pSaver1.clear();
+  pSaver1.reset();
   PCHECK(0 == setenv(key, "blah", true));
   EXPECT_STREQ("blah", getenv(key));
-  pSaver2.clear();
+  pSaver2.reset();
   EXPECT_EQ(value, getenv(key));
 }
 
@@ -150,10 +154,11 @@ TEST(EnvironmentStateTest, forSubprocess) {
   std::vector<std::string> expected = {"spork=foon"};
   auto vec = env.toVector();
   EXPECT_EQ(expected, vec);
-  Subprocess subProcess{{fLS::FLAGS_env_util_subprocess_binary},
-                        {},
-                        fLS::FLAGS_env_util_subprocess_binary.c_str(),
-                        &vec};
+  Subprocess subProcess{
+      {fLS::FLAGS_env_util_subprocess_binary},
+      {},
+      fLS::FLAGS_env_util_subprocess_binary.c_str(),
+      &vec};
   EXPECT_EQ(0, subProcess.wait().exitStatus());
 }
 

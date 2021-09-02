@@ -17,11 +17,10 @@
 #include <folly/io/async/AsyncPipe.h>
 
 #include <folly/FileUtil.h>
+#include <folly/Utility.h>
 #include <folly/detail/FileUtilDetail.h>
 #include <folly/io/async/AsyncSocketException.h>
 
-using folly::IOBuf;
-using folly::IOBufQueue;
 using std::string;
 using std::unique_ptr;
 
@@ -62,7 +61,7 @@ static int recv_internal(NetworkSocket s, void* buf, size_t count) {
   if (r == -1 && WSAGetLastError() == WSAEWOULDBLOCK) {
     errno = EAGAIN;
   }
-  return r;
+  return folly::to_narrow(r);
 }
 #endif
 
@@ -161,8 +160,7 @@ void AsyncPipeReader::handlerReady(uint16_t events) noexcept {
 }
 
 void AsyncPipeWriter::write(
-    unique_ptr<folly::IOBuf> buf,
-    AsyncWriter::WriteCallback* callback) {
+    unique_ptr<folly::IOBuf> buf, AsyncWriter::WriteCallback* callback) {
   if (closed()) {
     if (callback) {
       AsyncSocketException ex(
@@ -244,7 +242,7 @@ static int send_internal(NetworkSocket s, const void* buf, size_t count) {
   if (r == -1 && WSAGetLastError() == WSAEWOULDBLOCK) {
     errno = EAGAIN;
   }
-  return r;
+  return folly::to_narrow(r);
 }
 #endif
 

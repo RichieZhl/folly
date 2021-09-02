@@ -18,6 +18,8 @@
 #include <folly/experimental/coro/Merge.h>
 #include <folly/experimental/coro/Transform.h>
 
+#if FOLLY_HAS_COROUTINES
+
 namespace folly {
 namespace coro {
 
@@ -35,7 +37,6 @@ multiplex(
     SelectIdFn&& selectId) {
   using EventType = CallbackRecord<Reference>;
   using ReferenceType = Enumerated<KeyType, EventType>;
-  using ValueType = Enumerated<KeyType, CallbackRecord<Value>>;
 
   return merge(
       std::move(exec),
@@ -72,3 +73,5 @@ multiplex(
 
 } // namespace coro
 } // namespace folly
+
+#endif // FOLLY_HAS_COROUTINES

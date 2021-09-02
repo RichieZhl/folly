@@ -16,11 +16,12 @@
 
 #include <folly/logging/CustomLogFormatter.h>
 
+#include <algorithm>
+
 #include <folly/Format.h>
 #include <folly/logging/LogLevel.h>
 #include <folly/logging/LogMessage.h>
 #include <folly/portability/Time.h>
-#include <algorithm>
 
 namespace {
 using folly::LogLevel;
@@ -68,9 +69,7 @@ struct FormatKeys {
   const std::size_t width;
 
   constexpr FormatKeys(
-      StringPiece key_,
-      std::size_t argIndex_,
-      std::size_t width_ = 0)
+      StringPiece key_, std::size_t argIndex_, std::size_t width_ = 0)
       : key(key_), argIndex(argIndex_), width(width_) {}
 };
 
@@ -83,7 +82,8 @@ struct FormatKeys {
  *
  * TODO: Support including thread names and thread context info.
  */
-constexpr std::array<FormatKeys, 11> formatKeys{{
+constexpr std::array<FormatKeys, 12> formatKeys{{
+    FormatKeys(/* key */ "CTX", /*    argIndex  */ 11),
     FormatKeys(/* key */ "D", /*      argIndex  */ 2, /* width */ 2),
     FormatKeys(/* key */ "FILE", /*   argIndex  */ 8),
     FormatKeys(/* key */ "FUN", /*    argIndex  */ 9),
@@ -96,7 +96,7 @@ constexpr std::array<FormatKeys, 11> formatKeys{{
     FormatKeys(/* key */ "USECS", /*  argIndex  */ 6, /* width */ 6),
     FormatKeys(/* key */ "m", /*      argIndex  */ 1, /* width */ 2),
 }};
-constexpr int messageIndex = formatKeys.size();
+constexpr size_t messageIndex = formatKeys.size();
 
 } // namespace
 
@@ -230,8 +230,7 @@ void CustomLogFormatter::parseFormatString(StringPiece input) {
 }
 
 std::string CustomLogFormatter::formatMessage(
-    const LogMessage& message,
-    const LogCategory* /* handlerCategory */) {
+    const LogMessage& message, const LogCategory* /* handlerCategory */) {
   // Get the local time info
   struct tm ltime;
   auto timeSinceEpoch = message.getTimestamp().time_since_epoch();
@@ -263,6 +262,7 @@ std::string CustomLogFormatter::formatMessage(
         basename,
         message.getFunctionName(),
         message.getLineNumber(),
+        message.getContextString(),
         // NOTE: THE FOLLOWING ARGUMENTS ALWAYS NEED TO BE THE LAST 3:
         message.getMessage(),
         // If colored logs are enabled, the singleLineLogFormat_ will contain
@@ -274,7 +274,7 @@ std::string CustomLogFormatter::formatMessage(
   // If the message contains multiple lines, ensure that the log header is
   // prepended before each message line.
   else {
-    const auto headerFormatter = folly::format(
+    const auto header = folly::sformat(
         logFormat_,
         getGlogLevelName(message.getLevel())[0],
         ltime.tm_mon + 1,
@@ -286,7 +286,8 @@ std::string CustomLogFormatter::formatMessage(
         message.getThreadID(),
         basename,
         message.getFunctionName(),
-        message.getLineNumber());
+        message.getLineNumber(),
+        message.getContextString());
 
     // Estimate header length. If this still isn't long enough the string will
     // grow as necessary, so the code will still be correct, but just slightly
@@ -320,7 +321,7 @@ std::string CustomLogFormatter::formatMessage(
       }
 
       auto line = msgData.subpiece(idx, end - idx);
-      headerFormatter.appendTo(buffer);
+      buffer += header;
       buffer.append(line.data(), line.size());
       buffer.push_back('\n');
 

@@ -24,6 +24,7 @@
 namespace folly {
 namespace fibers {
 
+class Fiber;
 class FiberManager;
 
 class LoopController {
@@ -40,7 +41,7 @@ class LoopController {
 
   /**
    * Called by FiberManager to schedule the loop function run
-   * at some point in the futufre.
+   * at some point in the future.
    */
   virtual void schedule() = 0;
 
@@ -51,14 +52,22 @@ class LoopController {
   virtual void runLoop() = 0;
 
   /**
+   * Run FiberManager runEagerFiberImpl(fiber). May have additional logic
+   * specific to a LoopController.
+   */
+  virtual void runEagerFiber(Fiber*) = 0;
+
+  /**
    * Same as schedule(), but safe to call from any thread.
    */
   virtual void scheduleThreadSafe() = 0;
 
   /**
    * Used by FiberManager to schedule some function to be run at some time.
+   * May return null, but only if called outside of runLoop() call (e.g. if
+   * Executor backing the timer is already destroyed).
    */
-  virtual HHWheelTimer& timer() = 0;
+  virtual HHWheelTimer* timer() = 0;
 };
 } // namespace fibers
 } // namespace folly

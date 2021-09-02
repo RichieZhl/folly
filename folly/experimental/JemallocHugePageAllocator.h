@@ -60,7 +60,7 @@ namespace folly {
  */
 class JemallocHugePageAllocator {
  public:
-  static bool init(int nr_pages);
+  static bool init(int initial_nr_pages, int max_nr_pages = 0);
 
   static void* allocate(size_t size) {
     // If uninitialized, flags_ will be 0 and the mallocx behavior
@@ -76,9 +76,7 @@ class JemallocHugePageAllocator {
     hugePagesSupported ? dallocx(p, flags_) : free(p);
   }
 
-  static bool initialized() {
-    return flags_ != 0;
-  }
+  static bool initialized() { return flags_ != 0; }
 
   static size_t freeSpace();
   static bool addressInArena(void* address);
@@ -109,12 +107,8 @@ class CxxHugePageAllocator {
     JemallocHugePageAllocator::deallocate(p, sizeof(T) * n);
   }
 
-  friend bool operator==(Self const&, Self const&) noexcept {
-    return true;
-  }
-  friend bool operator!=(Self const&, Self const&) noexcept {
-    return false;
-  }
+  friend bool operator==(Self const&, Self const&) noexcept { return true; }
+  friend bool operator!=(Self const&, Self const&) noexcept { return false; }
 };
 
 } // namespace folly

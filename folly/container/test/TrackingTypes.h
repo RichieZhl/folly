@@ -24,6 +24,7 @@
 #include <folly/Function.h>
 #include <folly/hash/Hash.h>
 #include <folly/lang/SafeAssert.h>
+#include <folly/portability/Asm.h>
 
 namespace folly {
 namespace test {
@@ -37,22 +38,24 @@ struct MoveOnlyTestInt {
   MoveOnlyTestInt(MoveOnlyTestInt&& rhs) noexcept : x(rhs.x) {}
   MoveOnlyTestInt(MoveOnlyTestInt const&) = delete;
   MoveOnlyTestInt& operator=(MoveOnlyTestInt&& rhs) noexcept {
+    FOLLY_SAFE_CHECK(!rhs.destroyed, "");
     x = rhs.x;
-    destroyed = rhs.destroyed;
     return *this;
   }
   MoveOnlyTestInt& operator=(MoveOnlyTestInt const&) = delete;
 
   ~MoveOnlyTestInt() {
+    FOLLY_SAFE_CHECK(!destroyed, "");
     destroyed = true;
+    asm_volatile_memory(); // try to keep compiler from eliding the store
   }
 
   bool operator==(MoveOnlyTestInt const& rhs) const {
+    FOLLY_SAFE_CHECK(!destroyed, "");
+    FOLLY_SAFE_CHECK(!rhs.destroyed, "");
     return x == rhs.x && destroyed == rhs.destroyed;
   }
-  bool operator!=(MoveOnlyTestInt const& rhs) const {
-    return !(*this == rhs);
-  }
+  bool operator!=(MoveOnlyTestInt const& rhs) const { return !(*this == rhs); }
 };
 
 struct ThrowOnCopyTestInt {
@@ -75,6 +78,35 @@ struct ThrowOnCopyTestInt {
 
   bool operator!=(const ThrowOnCopyTestInt& other) const {
     return !(x == other.x);
+  }
+};
+
+struct PermissiveConstructorTestInt {
+  int x;
+
+  PermissiveConstructorTestInt() noexcept : x(0) {}
+  /* implicit */ PermissiveConstructorTestInt(int x0) : x(x0) {}
+
+  template <typename T>
+  /* implicit */ PermissiveConstructorTestInt(T&& src)
+      : x(std::forward<T>(src)) {}
+
+  PermissiveConstructorTestInt(PermissiveConstructorTestInt&& rhs) noexcept
+      : x(rhs.x) {}
+  PermissiveConstructorTestInt(PermissiveConstructorTestInt const&) = delete;
+  PermissiveConstructorTestInt& operator=(
+      PermissiveConstructorTestInt&& rhs) noexcept {
+    x = rhs.x;
+    return *this;
+  }
+  PermissiveConstructorTestInt& operator=(PermissiveConstructorTestInt const&) =
+      delete;
+
+  bool operator==(PermissiveConstructorTestInt const& rhs) const {
+    return x == rhs.x;
+  }
+  bool operator!=(PermissiveConstructorTestInt const& rhs) const {
+    return !(*this == rhs);
   }
 };
 
@@ -125,9 +157,7 @@ struct Counts {
   bool operator==(Counts const& rhs) const {
     return dist(rhs) == 0 && destroyed == rhs.destroyed;
   }
-  bool operator!=(Counts const& rhs) const {
-    return !(*this == rhs);
-  }
+  bool operator!=(Counts const& rhs) const { return !(*this == rhs); }
 };
 
 inline std::ostream& operator<<(std::ostream& xo, Counts const& counts) {
@@ -235,12 +265,8 @@ struct Tracked {
     counts().destroyed++;
   }
 
-  bool operator==(Tracked const& rhs) const {
-    return val_ == rhs.val_;
-  }
-  bool operator!=(Tracked const& rhs) const {
-    return !(*this == rhs);
-  }
+  bool operator==(Tracked const& rhs) const { return val_ == rhs.val_; }
+  bool operator!=(Tracked const& rhs) const { return !(*this == rhs); }
 };
 
 template <int Tag>
@@ -250,21 +276,15 @@ struct TransparentTrackedHash {
   size_t operator()(Tracked<Tag> const& tracked) const {
     return tracked.val_ ^ Tag;
   }
-  size_t operator()(uint64_t v) const {
-    return v ^ Tag;
-  }
+  size_t operator()(uint64_t v) const { return v ^ Tag; }
 };
 
 template <int Tag>
 struct TransparentTrackedEqual {
   using is_transparent = void;
 
-  uint64_t unwrap(Tracked<Tag> const& v) const {
-    return v.val_;
-  }
-  uint64_t unwrap(uint64_t v) const {
-    return v;
-  }
+  uint64_t unwrap(Tracked<Tag> const& v) const { return v.val_; }
+  uint64_t unwrap(uint64_t v) const { return v; }
 
   template <typename A, typename B>
   bool operator()(A const& lhs, B const& rhs) const {
@@ -454,9 +474,7 @@ class GenericAlloc {
     return *this;
   }
 
-  T* allocate(size_t n) {
-    return static_cast<T*>((*alloc_)(n * sizeof(T)));
-  }
+  T* allocate(size_t n) { return static_cast<T*>((*alloc_)(n * sizeof(T))); }
   void deallocate(T* p, size_t n) {
     (*dealloc_)(static_cast<void*>(p), n * sizeof(T));
   }
@@ -509,9 +527,7 @@ class GenericHasher {
   /* implicit */ GenericHasher(H&& hasher)
       : hasher_{std::make_shared<HasherFunc>(std::forward<H>(hasher))} {}
 
-  std::size_t operator()(T const& val) const {
-    return (*hasher_)(val);
-  }
+  std::size_t operator()(T const& val) const { return (*hasher_)(val); }
 
  private:
   std::shared_ptr<HasherFunc> hasher_;
@@ -538,6 +554,7 @@ namespace std {
 template <>
 struct hash<folly::test::MoveOnlyTestInt> {
   std::size_t operator()(folly::test::MoveOnlyTestInt const& val) const {
+    FOLLY_SAFE_CHECK(!val.destroyed, "");
     return val.x;
   }
 };
@@ -545,6 +562,14 @@ struct hash<folly::test::MoveOnlyTestInt> {
 template <>
 struct hash<folly::test::ThrowOnCopyTestInt> {
   std::size_t operator()(folly::test::ThrowOnCopyTestInt const& val) const {
+    return val.x;
+  }
+};
+
+template <>
+struct hash<folly::test::PermissiveConstructorTestInt> {
+  std::size_t operator()(
+      folly::test::PermissiveConstructorTestInt const& val) const {
     return val.x;
   }
 };

@@ -28,24 +28,25 @@ class MockAsyncSSLSocket : public AsyncSSLSocket {
       const std::shared_ptr<SSLContext>& ctx,
       EventBase* base,
       bool deferSecurityNegotiation = false)
-      : AsyncSocket(base),
-        AsyncSSLSocket(ctx, base, deferSecurityNegotiation) {}
+      : AsyncSSLSocket(ctx, base, deferSecurityNegotiation) {}
 
-  MOCK_METHOD5(
+  MOCK_METHOD6(
       connect_,
       void(
           AsyncSocket::ConnectCallback*,
           const folly::SocketAddress&,
           int,
-          const OptionMap&,
-          const folly::SocketAddress&));
+          const folly::SocketOptionMap&,
+          const folly::SocketAddress&,
+          const std::string&));
   void connect(
       AsyncSocket::ConnectCallback* callback,
       const folly::SocketAddress& address,
       int timeout,
-      const OptionMap& options,
-      const folly::SocketAddress& bindAddr) noexcept override {
-    connect_(callback, address, timeout, options, bindAddr);
+      const folly::SocketOptionMap& options,
+      const folly::SocketAddress& bindAddr,
+      const std::string& ifName) noexcept override {
+    connect_(callback, address, timeout, options, bindAddr, ifName);
   }
 
   MOCK_CONST_METHOD1(getLocalAddress, void(folly::SocketAddress*));
@@ -55,11 +56,9 @@ class MockAsyncSSLSocket : public AsyncSSLSocket {
   MOCK_CONST_METHOD0(readable, bool());
   MOCK_CONST_METHOD0(hangup, bool());
   MOCK_CONST_METHOD2(
-      getSelectedNextProtocol,
-      void(const unsigned char**, unsigned*));
+      getSelectedNextProtocol, void(const unsigned char**, unsigned*));
   MOCK_CONST_METHOD2(
-      getSelectedNextProtocolNoThrow,
-      bool(const unsigned char**, unsigned*));
+      getSelectedNextProtocolNoThrow, bool(const unsigned char**, unsigned*));
   MOCK_METHOD1(setReadCB, void(ReadCallback*));
 
   void sslConn(

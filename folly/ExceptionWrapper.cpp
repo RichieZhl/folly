@@ -32,62 +32,28 @@ exception_wrapper::VTable const exception_wrapper::uninit_{
     &noop_<exception_wrapper, exception_wrapper const*>};
 
 exception_wrapper::VTable const exception_wrapper::ExceptionPtr::ops_{
-    copy_,
-    move_,
-    delete_,
-    throw_,
-    type_,
-    get_exception_,
-    get_exception_ptr_};
+    copy_, move_, delete_, throw_, type_, get_exception_, get_exception_ptr_};
 
 exception_wrapper::VTable const exception_wrapper::SharedPtr::ops_{
-    copy_,
-    move_,
-    delete_,
-    throw_,
-    type_,
-    get_exception_,
-    get_exception_ptr_};
-
-namespace {
-std::exception const* get_std_exception_(std::exception_ptr eptr) noexcept {
-  try {
-    std::rethrow_exception(eptr);
-  } catch (const std::exception& ex) {
-    return &ex;
-  } catch (...) {
-    return nullptr;
-  }
-}
-} // namespace
+    copy_, move_, delete_, throw_, type_, get_exception_, get_exception_ptr_};
 
 exception_wrapper exception_wrapper::from_exception_ptr(
     std::exception_ptr const& ptr) noexcept {
-  if (!ptr) {
-    return exception_wrapper();
-  }
-  try {
-    std::rethrow_exception(ptr);
-  } catch (std::exception& e) {
-    return exception_wrapper(std::current_exception(), e);
-  } catch (...) {
-    return exception_wrapper(std::current_exception());
-  }
+  return from_exception_ptr(folly::copy(ptr));
 }
 
-exception_wrapper::exception_wrapper(std::exception_ptr ptr) noexcept
-    : exception_wrapper{} {
+exception_wrapper exception_wrapper::from_exception_ptr(
+    std::exception_ptr&& ptr) noexcept {
+  return !ptr ? exception_wrapper() : exception_wrapper(std::move(ptr));
+}
+
+exception_wrapper::exception_wrapper(std::exception_ptr const& ptr) noexcept
+    : exception_wrapper{folly::copy(ptr)} {}
+
+exception_wrapper::exception_wrapper(std::exception_ptr&& ptr) noexcept {
   if (ptr) {
-    if (auto e = get_std_exception_(ptr)) {
-      LOG(DFATAL)
-          << "Performance error: Please construct exception_wrapper with a "
-             "reference to the std::exception along with the "
-             "std::exception_ptr.";
-      *this = exception_wrapper{std::move(ptr), *e};
-    } else {
-      Unknown uk;
-      *this = exception_wrapper{ptr, uk};
-    }
+    ::new (&eptr_) ExceptionPtr{std::move(ptr)};
+    vptr_ = &ExceptionPtr::ops_;
   }
 }
 

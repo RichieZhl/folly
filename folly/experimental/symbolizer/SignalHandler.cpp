@@ -30,15 +30,22 @@
 
 #include <glog/logging.h>
 
-#include <folly/Conv.h>
 #include <folly/ScopeGuard.h>
-#include <folly/experimental/symbolizer/ElfCache.h>
 #include <folly/experimental/symbolizer/Symbolizer.h>
+#include <folly/lang/ToAscii.h>
 #include <folly/portability/SysSyscall.h>
 #include <folly/portability/Unistd.h>
 
 namespace folly {
 namespace symbolizer {
+
+#ifndef _WIN32
+
+const unsigned long kAllFatalSignals = (1UL << SIGSEGV) | (1UL << SIGILL) |
+    (1UL << SIGFPE) | (1UL << SIGABRT) | (1UL << SIGBUS) | (1UL << SIGTERM) |
+    (1UL << SIGQUIT);
+
+#endif
 
 namespace {
 
@@ -96,6 +103,20 @@ FatalSignalCallbackRegistry* getFatalSignalCallbackRegistry() {
   return fatalSignalCallbackRegistry;
 }
 
+} // namespace
+
+void addFatalSignalCallback(SignalCallback cb) {
+  getFatalSignalCallbackRegistry()->add(cb);
+}
+
+void installFatalSignalCallbacks() {
+  getFatalSignalCallbackRegistry()->markInstalled();
+}
+
+#ifndef _WIN32
+
+namespace {
+
 struct {
   int number;
   const char* name;
@@ -111,7 +132,7 @@ struct {
     {0, nullptr, {}},
 };
 
-void callPreviousSignalHandler(int signum) {
+FOLLY_MAYBE_UNUSED void callPreviousSignalHandler(int signum) {
   // Restore disposition to old disposition, then kill ourselves with the same
   // signal. The signal will be blocked until we return from our handler,
   // then it will invoke the default handler and abort.
@@ -131,6 +152,8 @@ void callPreviousSignalHandler(int signum) {
   raise(signum);
 }
 
+#if FOLLY_USE_SYMBOLIZER
+
 // Note: not thread-safe, but that's okay, as we only let one thread
 // in our signal handler at a time.
 //
@@ -138,29 +161,6 @@ void callPreviousSignalHandler(int signum) {
 //
 // Initialized by installFatalSignalHandler
 SafeStackTracePrinter* gStackTracePrinter;
-
-void printDec(uint64_t val) {
-  char buf[20];
-  uint32_t n = uint64ToBufferUnsafe(val, buf);
-  gStackTracePrinter->print(StringPiece(buf, n));
-}
-
-const char kHexChars[] = "0123456789abcdef";
-void printHex(uint64_t val) {
-  // TODO(tudorb): Add this to folly/Conv.h
-  char buf[2 + 2 * sizeof(uint64_t)]; // "0x" prefix, 2 digits for each byte
-
-  char* end = buf + sizeof(buf);
-  char* p = end;
-  do {
-    *--p = kHexChars[val & 0x0f];
-    val >>= 4;
-  } while (val != 0);
-  *--p = 'x';
-  *--p = '0';
-
-  gStackTracePrinter->print(StringPiece(p, end));
-}
 
 void print(StringPiece sp) {
   gStackTracePrinter->print(sp);
@@ -170,10 +170,23 @@ void flush() {
   gStackTracePrinter->flush();
 }
 
+void printDec(uint64_t val) {
+  char buf[to_ascii_size_max_decimal<uint64_t>];
+  size_t n = to_ascii_decimal(buf, val);
+  gStackTracePrinter->print(StringPiece(buf, n));
+}
+
+void printHex(uint64_t val) {
+  char buf[2 + to_ascii_size_max<16, uint64_t>];
+  auto out = buf + 0;
+  *out++ = '0';
+  *out++ = 'x';
+  out += to_ascii_lower<16>(out, buf + sizeof(buf), val);
+  gStackTracePrinter->print(StringPiece(buf, out - buf));
+}
+
 void dumpTimeInfo() {
-  SCOPE_EXIT {
-    flush();
-  };
+  SCOPE_EXIT { flush(); };
   time_t now = time(nullptr);
   print("*** Aborted at ");
   printDec(now);
@@ -335,9 +348,7 @@ const char* signal_reason(int signum, int si_code) {
 }
 
 void dumpSignalInfo(int signum, siginfo_t* siginfo) {
-  SCOPE_EXIT {
-    flush();
-  };
+  SCOPE_EXIT { flush(); };
   // Get the signal name, if possible.
   const char* name = nullptr;
   for (auto p = kFatalSignals; p->name; ++p) {
@@ -361,8 +372,15 @@ void dumpSignalInfo(int signum, siginfo_t* siginfo) {
   printDec(getpid());
   print(" (pthread TID ");
   printHex((uint64_t)pthread_self());
+#if defined(__linux__)
   print(") (linux TID ");
   printDec(syscall(__NR_gettid));
+#elif defined(__FreeBSD__)
+  long tid = 0;
+  syscall(432, &tid);
+  print(") (freebsd TID ");
+  printDec(tid);
+#endif
 
   // Kernel-sourced signals don't give us useful info for pid/uid.
   if (siginfo->si_code <= 0) {
@@ -437,7 +455,13 @@ void innerSignalHandler(int signum, siginfo_t* info, void* /* uctx */) {
   }
 }
 
+namespace {
+std::atomic<bool> gFatalSignalReceived{false};
+} // namespace
+
 void signalHandler(int signum, siginfo_t* info, void* uctx) {
+  gFatalSignalReceived.store(true, std::memory_order_relaxed);
+
   int savedErrno = errno;
   SCOPE_EXIT {
     flush();
@@ -450,26 +474,14 @@ void signalHandler(int signum, siginfo_t* info, void* uctx) {
   callPreviousSignalHandler(signum);
 }
 
-} // namespace
-
-void addFatalSignalCallback(SignalCallback cb) {
-  getFatalSignalCallbackRegistry()->add(cb);
-}
-
-void installFatalSignalCallbacks() {
-  getFatalSignalCallbackRegistry()->markInstalled();
-}
-
-namespace {
-
-std::atomic<bool> gAlreadyInstalled;
+#endif // FOLLY_USE_SYMBOLIZER
 
 // Small sigaltstack size threshold.
 // 8931 is known to cause the signal handler to stack overflow during
 // symbolization even for a simple one-liner "kill(getpid(), SIGTERM)".
-const size_t kSmallSigAltStackSize = 8931;
+constexpr size_t kSmallSigAltStackSize = 8931;
 
-bool isSmallSigAltStackEnabled() {
+FOLLY_MAYBE_UNUSED bool isSmallSigAltStackEnabled() {
   stack_t ss;
   if (sigaltstack(nullptr, &ss) != 0) {
     return false;
@@ -482,7 +494,13 @@ bool isSmallSigAltStackEnabled() {
 
 } // namespace
 
-void installFatalSignalHandler() {
+#endif // _WIN32
+
+namespace {
+std::atomic<bool> gAlreadyInstalled;
+}
+
+void installFatalSignalHandler(std::bitset<64> signals) {
   if (gAlreadyInstalled.exchange(true)) {
     // Already done.
     return;
@@ -493,12 +511,19 @@ void installFatalSignalHandler() {
   gFatalSignalCallbackRegistry.store(
       getFatalSignalCallbackRegistry(), std::memory_order_release);
 
+#if FOLLY_USE_SYMBOLIZER
   // If a small sigaltstack is enabled (ex. Rust stdlib might use sigaltstack
   // to set a small stack), the default SafeStackTracePrinter would likely
   // stack overflow. Replace it with the unsafe self-allocate printer.
-  bool useUnsafePrinter = isSmallSigAltStackEnabled();
+  bool useUnsafePrinter = kIsLinux && isSmallSigAltStackEnabled();
   if (useUnsafePrinter) {
+#if FOLLY_HAVE_SWAPCONTEXT
     gStackTracePrinter = new UnsafeSelfAllocateStackTracePrinter();
+#else
+    // This environment does not support swapcontext, so always use
+    // SafeStackTracePrinter.
+    gStackTracePrinter = new SafeStackTracePrinter();
+#endif // FOLLY_HAVE_SWAPCONTEXT
   } else {
     gStackTracePrinter = new SafeStackTracePrinter();
   }
@@ -523,8 +548,21 @@ void installFatalSignalHandler() {
   sa.sa_sigaction = &signalHandler;
 
   for (auto p = kFatalSignals; p->name; ++p) {
-    CHECK_ERR(sigaction(p->number, &sa, &p->oldAction));
+    if ((p->number < static_cast<int>(signals.size())) &&
+        signals.test(p->number)) {
+      CHECK_ERR(sigaction(p->number, &sa, &p->oldAction));
+    }
   }
+#endif // FOLLY_USE_SYMBOLIZER
 }
+
+bool fatalSignalReceived() {
+#ifdef FOLLY_USE_SYMBOLIZER
+  return gFatalSignalReceived.load(std::memory_order_relaxed);
+#else
+  return false;
+#endif
+}
+
 } // namespace symbolizer
 } // namespace folly

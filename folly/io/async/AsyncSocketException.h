@@ -40,9 +40,10 @@ class FOLLY_EXPORT AsyncSocketException : public std::runtime_error {
     INVALID_STATE = 10,
     SSL_ERROR = 12,
     COULD_NOT_BIND = 13,
-    SASL_HANDSHAKE_TIMEOUT = 14,
+    // SASL_HANDSHAKE_TIMEOUT = 14, // no longer used
     NETWORK_ERROR = 15,
     EARLY_DATA_REJECTED = 16,
+    CANCELED = 17,
   };
 
   AsyncSocketException(
@@ -53,13 +54,9 @@ class FOLLY_EXPORT AsyncSocketException : public std::runtime_error {
         type_(type),
         errno_(errnoCopy) {}
 
-  AsyncSocketExceptionType getType() const noexcept {
-    return type_;
-  }
+  AsyncSocketExceptionType getType() const noexcept { return type_; }
 
-  int getErrno() const noexcept {
-    return errno_;
-  }
+  int getErrno() const noexcept { return errno_; }
 
  protected:
   /** get the string of exception type */
@@ -68,9 +65,7 @@ class FOLLY_EXPORT AsyncSocketException : public std::runtime_error {
 
   /** Return a message based on the input. */
   static std::string getMessage(
-      AsyncSocketExceptionType type,
-      const std::string& message,
-      int errnoCopy);
+      AsyncSocketExceptionType type, const std::string& message, int errnoCopy);
 
   /** Error code */
   AsyncSocketExceptionType type_;

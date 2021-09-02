@@ -40,6 +40,8 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
  public:
   class Callback {
    public:
+    using OnDataAvailableParams =
+        AsyncUDPSocket::ReadCallback::OnDataAvailableParams;
     /**
      * Invoked when we start reading data from socket. It is invoked in
      * each acceptors/listeners event base thread.
@@ -65,13 +67,28 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
     virtual void onListenResumed() noexcept {}
 
     /**
+     * Invoked when the server socket can still read but need to inform the
+     * callback object that it should not process read from new client address.
+     * It is invoked in each acceptors/listeners event base thread.
+     */
+    virtual void onAcceptNewPeerPaused() noexcept {}
+
+    /**
+     * Invoked when need to inform the callback object that it can resume
+     * process read from new client address. It is invoked in each
+     * acceptors/listeners event base thread.
+     */
+    virtual void onAcceptNewPeerResumed() noexcept {}
+
+    /**
      * Invoked when a new packet is received
      */
     virtual void onDataAvailable(
         std::shared_ptr<AsyncUDPSocket> socket,
         const folly::SocketAddress& addr,
         std::unique_ptr<folly::IOBuf> buf,
-        bool truncated) noexcept = 0;
+        bool truncated,
+        OnDataAvailableParams) noexcept = 0;
 
     virtual ~Callback() = default;
   };
@@ -97,31 +114,40 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
     }
   }
 
-  void bind(const folly::SocketAddress& addy) {
+  void bind(
+      const folly::SocketAddress& addy,
+      const SocketOptionMap& options = emptySocketOptionMap,
+      const std::string& ifName = "") {
     CHECK(!socket_);
 
     socket_ = std::make_shared<AsyncUDPSocket>(evb_);
     socket_->setReusePort(reusePort_);
     socket_->setReuseAddr(reuseAddr_);
-    socket_->bind(addy);
+    socket_->applyOptions(
+        validateSocketOptions(
+            options, addy.getFamily(), SocketOptionKey::ApplyPos::PRE_BIND),
+        SocketOptionKey::ApplyPos::PRE_BIND);
+    AsyncUDPSocket::BindOptions bindOptions;
+    bindOptions.ifName = ifName;
+    socket_->bind(addy, bindOptions);
+    socket_->applyOptions(
+        validateSocketOptions(
+            options, addy.getFamily(), SocketOptionKey::ApplyPos::POST_BIND),
+        SocketOptionKey::ApplyPos::POST_BIND);
+
+    applyEventCallback();
   }
 
-  void setReusePort(bool reusePort) {
-    reusePort_ = reusePort;
-  }
+  void setReusePort(bool reusePort) { reusePort_ = reusePort; }
 
-  void setReuseAddr(bool reuseAddr) {
-    reuseAddr_ = reuseAddr;
-  }
+  void setReuseAddr(bool reuseAddr) { reuseAddr_ = reuseAddr; }
 
   folly::SocketAddress address() const {
     CHECK(socket_);
     return socket_->address();
   }
 
-  void getAddress(SocketAddress* a) const override {
-    *a = address();
-  }
+  void getAddress(SocketAddress* a) const override { *a = address(); }
 
   /**
    * Add a listener to the round robin list
@@ -148,9 +174,7 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
     return socket_->getNetworkSocket();
   }
 
-  const std::shared_ptr<AsyncUDPSocket>& getSocket() const {
-    return socket_;
-  }
+  const std::shared_ptr<AsyncUDPSocket>& getSocket() const { return socket_; }
 
   void close() {
     CHECK(socket_) << "Need to bind before closing";
@@ -158,16 +182,12 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
     socket_.reset();
   }
 
-  EventBase* getEventBase() const override {
-    return evb_;
-  }
+  EventBase* getEventBase() const override { return evb_; }
 
   /**
    * Indicates if the current socket is accepting.
    */
-  bool isAccepting() const {
-    return socket_->isReading();
-  }
+  bool isAccepting() const { return socket_->isReading(); }
 
   /**
    * Pauses accepting datagrams on the underlying socket.
@@ -179,6 +199,19 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
 
       listener.first->runInEventBaseThread(
           [callback]() mutable { callback->onListenPaused(); });
+    }
+  }
+
+  /**
+   * Inform the callback object that it should not process read from new client
+   * address.
+   */
+  void pauseAcceptingNewPeer() {
+    for (auto& listener : listeners_) {
+      auto callback = listener.second;
+
+      listener.first->runInEventBaseThread(
+          [callback]() mutable { callback->onAcceptNewPeerPaused(); });
     }
   }
 
@@ -195,6 +228,26 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
     }
   }
 
+  /**
+   * Inform the callback object that it can process read from new client address
+   * now.
+   */
+  void resumeAcceptingNewPeer() {
+    for (auto& listener : listeners_) {
+      auto callback = listener.second;
+
+      listener.first->runInEventBaseThread(
+          [callback]() mutable { callback->onAcceptNewPeerResumed(); });
+    }
+  }
+
+  void setEventCallback(EventRecvmsgCallback* cb) {
+    eventCb_ = cb;
+    applyEventCallback();
+  }
+
+  bool setTimestamping(int val) { return socket_->setTimestamping(val); }
+
  private:
   // AsyncUDPSocket::ReadCallback
   void getReadBuffer(void** buf, size_t* len) noexcept override {
@@ -204,7 +257,8 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
   void onDataAvailable(
       const folly::SocketAddress& clientAddress,
       size_t len,
-      bool truncated) noexcept override {
+      bool truncated,
+      OnDataAvailableParams params) noexcept override {
     buf_.postallocate(len);
     auto data = buf_.split(len);
 
@@ -244,8 +298,10 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
               client = clientAddress,
               callback,
               data = std::move(data),
-              truncated]() mutable {
-      callback->onDataAvailable(socket, client, std::move(data), truncated);
+              truncated,
+              params]() mutable {
+      callback->onDataAvailable(
+          socket, client, std::move(data), truncated, params);
     };
 
     listeners_[listenerId].first->runInEventBaseThread(std::move(f));
@@ -264,6 +320,16 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
 
       listener.first->runInEventBaseThread(
           [callback]() mutable { callback->onListenStopped(); });
+    }
+  }
+
+  void applyEventCallback() {
+    if (socket_) {
+      if (eventCb_) {
+        socket_->setEventCallback(eventCb_);
+      } else {
+        socket_->resetEventCallback();
+      }
     }
   }
 
@@ -286,6 +352,8 @@ class AsyncUDPServerSocket : private AsyncUDPSocket::ReadCallback,
 
   bool reusePort_{false};
   bool reuseAddr_{false};
+
+  EventRecvmsgCallback* eventCb_{nullptr};
 };
 
 } // namespace folly

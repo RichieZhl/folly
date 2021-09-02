@@ -16,22 +16,19 @@
 
 #include <folly/logging/AsyncLogWriter.h>
 
+#include <iostream>
+
 #include <folly/logging/LoggerDB.h>
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
 #include <folly/test/TestUtils.h>
-#include <iostream>
 
 using namespace folly;
-using namespace std::literals::chrono_literals;
-using testing::ContainsRegex;
 
 namespace {
 static bool* expectedMessage;
 void handleLoggingError(
-    StringPiece /* file */,
-    int /* lineNumber */,
-    std::string&& msg) {
+    StringPiece /* file */, int /* lineNumber */, std::string&& msg) {
   if (folly::kIsDebug) {
     std::cerr << msg << std::endl;
   } else {
@@ -40,11 +37,9 @@ void handleLoggingError(
 }
 
 class NoCleanUpLogWriter : public AsyncLogWriter {
-  void performIO(std::vector<std::string>*, size_t) override {}
+  void performIO(const std::vector<std::string>&, size_t) override {}
 
-  bool ttyOutput() const override {
-    return false;
-  }
+  bool ttyOutput() const override { return false; }
 };
 } // namespace
 

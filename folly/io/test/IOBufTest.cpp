@@ -15,18 +15,17 @@
  */
 
 #include <folly/io/IOBuf.h>
-#include <folly/io/TypedIOBuf.h>
 
 #include <cstddef>
 #include <random>
 
 #include <folly/Range.h>
+#include <folly/io/TypedIOBuf.h>
 #include <folly/memory/Malloc.h>
 #include <folly/portability/GTest.h>
 
 using folly::ByteRange;
 using folly::fbstring;
-using folly::fbvector;
 using folly::IOBuf;
 using folly::ordering;
 using folly::StringPiece;
@@ -79,19 +78,17 @@ void testAllocSize(uint32_t requestedCapacity) {
 }
 
 TEST(IOBuf, AllocSizes) {
-  // Try with a small allocation size that should fit in the internal buffer
-  testAllocSize(28);
+  // cover small evil values exhaustively, including the
+  // kDefaultCombinedBufSize transition.
+  for (uint32_t i = 0; i < 1234; i++) {
+    testAllocSize(i);
+  }
 
-  // Try with a large allocation size that will require an external buffer.
+  // Try with large allocation sizes that will require an external buffer.
   testAllocSize(9000);
-
-  // 220 bytes is currently the cutoff
-  // (It would be nice to use the IOBuf::kMaxInternalDataSize constant,
-  // but it's private and it doesn't seem worth making it public just for this
-  // test code.)
-  testAllocSize(220);
-  testAllocSize(219);
-  testAllocSize(221);
+  testAllocSize(1048575);
+  testAllocSize(1048576);
+  testAllocSize(1048577);
 }
 
 void deleteArrayBuffer(void* buf, void* arg) {
@@ -170,6 +167,21 @@ TEST(IOBuf, TakeOwnership) {
     fbstring str = iobuf->moveToFbString();
     EXPECT_EQ(str, "A");
   }
+
+  deleteCount = 0;
+  uint32_t size6 = 100;
+  uint8_t* buf6 = new uint8_t[size6];
+  uint32_t offset6 = 48;
+  uint32_t length6 = 48;
+  unique_ptr<IOBuf> iobuf6(IOBuf::takeOwnership(
+      buf6, size6, offset6, length6, deleteArrayBuffer, &deleteCount));
+  EXPECT_EQ(buf6 + offset6, iobuf6->data());
+  EXPECT_EQ(length6, iobuf6->length());
+  EXPECT_EQ(buf6, iobuf6->buffer());
+  EXPECT_EQ(size6, iobuf6->capacity());
+  EXPECT_EQ(0, deleteCount);
+  iobuf6.reset();
+  EXPECT_EQ(1, deleteCount);
 }
 
 TEST(IOBuf, GetUserData) {
@@ -247,6 +259,17 @@ TEST(IOBuf, WrapBuffer) {
   EXPECT_EQ(size4, iobuf4.length());
   EXPECT_EQ(buf4.get(), iobuf4.buffer());
   EXPECT_EQ(size4, iobuf4.capacity());
+
+  if (folly::kIsSanitizeAddress) {
+    const uint32_t size5 = 100;
+    uint8_t buf5[size5];
+    EXPECT_DEATH(IOBuf::wrapBuffer(buf5, size5 + 1), "asan_region_is_poisoned");
+
+    const uint32_t size6 = 100;
+    std::vector<uint8_t> buf6(size6);
+    EXPECT_DEATH(
+        IOBuf::wrapBuffer(buf6.data(), size6 + 1), "asan_region_is_poisoned");
+  }
 }
 
 TEST(IOBuf, CreateCombined) {
@@ -797,9 +820,7 @@ int customDeleterCount = 0;
 int destructorCount = 0;
 struct OwnershipTestClass {
   explicit OwnershipTestClass(int v = 0) : val(v) {}
-  ~OwnershipTestClass() {
-    ++destructorCount;
-  }
+  ~OwnershipTestClass() { ++destructorCount; }
   int val;
 };
 
@@ -984,7 +1005,7 @@ TEST_P(MoveToFbStringTest, Simple) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     MoveToFbString,
     MoveToFbStringTest,
     ::testing::Combine(
@@ -992,10 +1013,7 @@ INSTANTIATE_TEST_CASE_P(
         ::testing::Values(1, 2, 10), // element count
         ::testing::Bool(), // shared
         ::testing::Values(
-            CREATE,
-            TAKE_OWNERSHIP_MALLOC,
-            TAKE_OWNERSHIP_CUSTOM,
-            USER_OWNED)));
+            CREATE, TAKE_OWNERSHIP_MALLOC, TAKE_OWNERSHIP_CUSTOM, USER_OWNED)));
 
 TEST(IOBuf, getIov) {
   uint32_t fillSeed = 0xdeadbeef;
@@ -1648,12 +1666,8 @@ TEST(IOBuf, FreeFn) {
     explicit IOBufFreeObserver(Func&& freeFunc, Func&& releaseFunc)
         : freeFunc_(std::move(freeFunc)),
           releaseFunc_(std::move(releaseFunc)) {}
-    void afterFreeExtBuffer() const noexcept {
-      freeFunc_();
-    }
-    void afterReleaseExtBuffer() const noexcept {
-      releaseFunc_();
-    }
+    void afterFreeExtBuffer() const noexcept { freeFunc_(); }
+    void afterReleaseExtBuffer() const noexcept { releaseFunc_(); }
 
    private:
     Func freeFunc_;
@@ -1712,4 +1726,56 @@ TEST(IOBuf, FreeFn) {
   }
   EXPECT_EQ(freeVal, 3);
   EXPECT_EQ(releaseVal, 0);
+}
+
+// Compute the chained capacity of a single non-chained IOBuf of capacity zero
+TEST(IOBuf, computeChainCapacityOfZeroSizeIOBuf) {
+  size_t size = 0;
+  uint8_t data[size];
+
+  // Create buffer of capacity 0
+  unique_ptr<IOBuf> buf(IOBuf::wrapBuffer(data, size));
+
+  EXPECT_EQ(buf->computeChainCapacity(), 0);
+}
+
+// Compute the chained capacity of a single non-chained IOBuf of capacity
+// non-zero
+TEST(IOBuf, computeChainCapacityOfNonZeroSizeIOBuf) {
+  size_t size = 20;
+  uint8_t data[size];
+
+  // Create buffer of capacity 20
+  unique_ptr<IOBuf> buf(IOBuf::wrapBuffer(data, size));
+
+  EXPECT_EQ(buf->computeChainCapacity(), 20);
+}
+
+// Compute the chained capacity of a chained IOBuf with chains having a variety
+// of zero and non-zero capacities.
+TEST(IOBuf, computeChainCapacityOfMixedCapacityChainedIOBuf) {
+  // Total capacity is 100
+  uint8_t data1[20];
+  uint8_t data2[0];
+  uint8_t data3[60];
+  uint8_t data4[15];
+  uint8_t data5[0];
+  uint8_t data6[5];
+
+  // Create IOBuf at head of chain
+  unique_ptr<IOBuf> buf(IOBuf::wrapBuffer(data1, sizeof(data1)));
+
+  // Create IOBuf chains
+  auto temp = buf.get();
+  temp->appendChain(IOBuf::wrapBuffer(data2, sizeof(data2)));
+  temp = temp->next();
+  temp->appendChain(IOBuf::wrapBuffer(data3, sizeof(data3)));
+  temp = temp->next();
+  temp->appendChain(IOBuf::wrapBuffer(data4, sizeof(data4)));
+  temp = temp->next();
+  temp->appendChain(IOBuf::wrapBuffer(data5, sizeof(data5)));
+  temp = temp->next();
+  temp->appendChain(IOBuf::wrapBuffer(data6, sizeof(data6)));
+
+  EXPECT_EQ(buf->computeChainCapacity(), 100);
 }

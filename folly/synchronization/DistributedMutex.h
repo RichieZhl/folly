@@ -16,12 +16,12 @@
 
 #pragma once
 
-#include <folly/Optional.h>
-#include <folly/functional/Invoke.h>
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+
+#include <folly/Optional.h>
+#include <folly/functional/Invoke.h>
 
 namespace folly {
 namespace detail {
@@ -189,7 +189,7 @@ class DistributedMutex {
    * It is undefined behavior to unlock from a thread that did not lock the
    * mutex
    */
-  void unlock(DistributedMutexStateProxy);
+  void unlock(DistributedMutexStateProxy const&);
 
   /**
    * Try to acquire the mutex
@@ -309,14 +309,9 @@ class DistributedMutex {
    * characteristics as the non-timed version of the combine method.  If
    * performance is critical, use that one instead
    */
-  template <
-      typename Rep,
-      typename Period,
-      typename Task,
-      typename ReturnType = decltype(std::declval<Task&>()())>
-  folly::Optional<ReturnType> try_lock_combine_for(
-      const std::chrono::duration<Rep, Period>& duration,
-      Task task);
+  template <typename Rep, typename Period, typename Task>
+  folly::Optional<invoke_result_t<Task&>> try_lock_combine_for(
+      const std::chrono::duration<Rep, Period>& duration, Task task);
 
   /**
    * Try to combine a task as a combined critical section untill the given time
@@ -324,14 +319,9 @@ class DistributedMutex {
    * Other than the difference in the meaning of the second argument, the
    * semantics of this function are identical to try_lock_combine_for()
    */
-  template <
-      typename Clock,
-      typename Duration,
-      typename Task,
-      typename ReturnType = decltype(std::declval<Task&>()())>
-  folly::Optional<ReturnType> try_lock_combine_until(
-      const std::chrono::time_point<Clock, Duration>& deadline,
-      Task task);
+  template <typename Clock, typename Duration, typename Task>
+  folly::Optional<invoke_result_t<Task&>> try_lock_combine_until(
+      const std::chrono::time_point<Clock, Duration>& deadline, Task task);
 
  private:
   Atomic<std::uintptr_t> state_{0};
@@ -350,4 +340,3 @@ using DistributedMutex = detail::distributed_mutex::DistributedMutex<>;
 } // namespace folly
 
 #include <folly/synchronization/DistributedMutex-inl.h>
-#include <folly/synchronization/DistributedMutexSpecializations.h>

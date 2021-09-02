@@ -187,6 +187,7 @@ THOUGHTS:
 #include <folly/lang/Pretty.h>
 #include <folly/portability/GFlags.h>
 #include <folly/portability/GTest.h>
+#include <folly/test/TestUtils.h>
 
 // We use some pre-processor magic to auto-generate setup and destruct code,
 // but it also means we have some parameters that may not be used.
@@ -662,12 +663,8 @@ struct Alloc : AllocTracker, Ticker {
   Alloc(Alloc&& o) noexcept : a(move(o.a)), id(o.id) {}
   Alloc& operator=(const Alloc&) = default;
   Alloc& operator=(Alloc&&) noexcept = default;
-  bool operator==(const Alloc& o) const {
-    return a == o.a && id == o.id;
-  }
-  bool operator!=(const Alloc& o) const {
-    return !(*this == o);
-  }
+  bool operator==(const Alloc& o) const { return a == o.a && id == o.id; }
+  bool operator!=(const Alloc& o) const { return !(*this == o); }
 
   //---------
   // tracking
@@ -1106,16 +1103,12 @@ struct PrettyType<Data<f, pad>> {
 
 template <typename T>
 struct PrettyType<std::allocator<T>> {
-  string operator()() {
-    return "std::allocator<" + PrettyType<T>()() + ">";
-  }
+  string operator()() { return "std::allocator<" + PrettyType<T>()() + ">"; }
 };
 
 template <typename T>
 struct PrettyType<Alloc<T>> {
-  string operator()() {
-    return "Alloc<" + PrettyType<T>()() + ">";
-  }
+  string operator()() { return "Alloc<" + PrettyType<T>()() + ">"; }
 };
 
 //-----------------------------------------------------------------------------
@@ -1247,9 +1240,7 @@ void populate(Vector& v, const pair<int, int>& ss) {
 
 template <typename A>
 struct allocGen {
-  static A get() {
-    return A();
-  }
+  static A get() { return A(); }
 };
 template <typename T>
 struct allocGen<Alloc<T>> {
@@ -1471,7 +1462,7 @@ void verifyAllocator(int ele, int cap) {
 // Master verifier
 template <class Vector>
 void verify(int extras) {
-  if (!is_arithmetic<typename Vector::value_type>::value) {
+  if (!std::is_arithmetic<typename Vector::value_type>::value) {
     ASSERT_EQ(0 + extras, getTotal()) << "there exist Data but no vectors";
   }
   isSane();
@@ -1485,7 +1476,7 @@ void verify(int extras) {
 template <class Vector>
 void verify(int extras, const Vector& v) {
   verifyVector(v);
-  if (!is_arithmetic<typename Vector::value_type>::value) {
+  if (!std::is_arithmetic<typename Vector::value_type>::value) {
     ASSERT_EQ(v.size() + extras, getTotal())
         << "not all Data are in the vector";
   }
@@ -1507,7 +1498,7 @@ void verify(int extras, const Vector& v1, const Vector& v2) {
     size += v2.size();
     cap += v2.capacity();
   }
-  if (!is_arithmetic<typename Vector::value_type>::value) {
+  if (!std::is_arithmetic<typename Vector::value_type>::value) {
     ASSERT_EQ(size + extras, getTotal()) << "not all Data are in the vector(s)";
   }
   isSane();
@@ -1557,9 +1548,7 @@ class DataState {
       data_ = nullptr;
     }
   }
-  ~DataState() {
-    delete[] data_;
-  }
+  ~DataState() { delete[] data_; }
 
   bool operator==(const DataState& o) const {
     if (size_ != o.size_) {
@@ -1581,9 +1570,7 @@ class DataState {
     return data_[i];
   }
 
-  size_type size() {
-    return size_;
-  }
+  size_type size() { return size_; }
 };
 
 // downgrade iterators
@@ -1687,7 +1674,7 @@ STL_TEST("23.2.1 Table 96.1-7", containerTypedefs, is_destructible) {
           typename Vector::const_iterator>::value,
       "Vector::iterator is not convertible to Vector::const_iterator");
   static_assert(
-      is_signed<typename Vector::difference_type>::value,
+      std::is_signed<typename Vector::difference_type>::value,
       "Vector::difference_type is not signed");
   static_assert(
       is_same<
@@ -1702,7 +1689,7 @@ STL_TEST("23.2.1 Table 96.1-7", containerTypedefs, is_destructible) {
               typename Vector::const_iterator>::difference_type>::value,
       "Vector::difference_type != Vector::const_iterator::difference_type");
   static_assert(
-      is_unsigned<typename Vector::size_type>::value,
+      std::is_unsigned<typename Vector::size_type>::value,
       "Vector::size_type is not unsigned");
   static_assert(
       sizeof(typename Vector::size_type) >=
@@ -1850,7 +1837,7 @@ STL_TEST("23.2.1 Table 96.15-18", iterators, is_destructible, a) {
   ASSERT_TRUE(Cdist == ca.size()) << "distance(cbegin, cend) != size";
 }
 
-STL_TEST("23.2.1 Table 96.19-20", equitable, is_arithmetic, a, b) {
+STL_TEST("23.2.1 Table 96.19-20", equitable, std::is_arithmetic, a, b) {
   const auto& ca = a;
   const auto& cb = b;
   DataState<Vector> dsa(a);
@@ -2022,7 +2009,7 @@ STL_TEST("23.2.1 Table 97.3-5", reversibleIterators, is_destructible, a) {
 //-----------------------------------------------------------------------------
 // Lexicographical functions
 
-STL_TEST("23.2.1 Table 98", comparable, is_arithmetic) {
+STL_TEST("23.2.1 Table 98", comparable, std::is_arithmetic) {
   const Vector v1 = {1, 2, 3, 4};
   const Vector v2 = {1, 2, 3, 4, 5};
   const Vector v3 = {1, 2, 2};
@@ -2082,10 +2069,7 @@ STL_TEST("23.2.1 Table 99.5", copyWithAllocator, is_copy_constructible, a, m) {
 }
 
 STL_TEST(
-    "23.2.1 Table 99.6",
-    moveConstructionWithAllocator,
-    is_destructible,
-    a) {
+    "23.2.1 Table 99.6", moveConstructionWithAllocator, is_destructible, a) {
   (void)a;
   // there is nothing new to test here
 }
@@ -2138,12 +2122,7 @@ STL_TEST("23.2.1-7", nCopyAllocConstruction, is_copy_constructible, n, t, m) {
 }
 
 STL_TEST(
-    "23.2.1-7",
-    forwardIteratorAllocConstruction,
-    is_destructible,
-    i,
-    j,
-    m) {
+    "23.2.1-7", forwardIteratorAllocConstruction, is_destructible, i, j, m) {
   auto fi = makeForwardIterator(i);
   auto fj = makeForwardIterator(j);
   const auto& cfi = fi;
@@ -2178,7 +2157,7 @@ STL_TEST(
   ASSERT_TRUE(m == u.get_allocator());
 }
 
-STL_TEST("23.2.1-7", ilAllocConstruction, is_arithmetic, m) {
+STL_TEST("23.2.1-7", ilAllocConstruction, std::is_arithmetic, m) {
   // gcc fail
   if (Ticker::TicksLeft >= 0) {
     return;
@@ -2240,11 +2219,7 @@ STL_TEST("23.2.3 Table 100.1", nCopyConstruction, is_copy_constructible, n, t) {
 }
 
 STL_TEST(
-    "23.2.3 Table 100.2",
-    forwardIteratorConstruction,
-    is_destructible,
-    i,
-    j) {
+    "23.2.3 Table 100.2", forwardIteratorConstruction, is_destructible, i, j) {
   // All data is emplace-constructible from int, so we restrict to
   // is_destructible
 
@@ -2289,7 +2264,7 @@ STL_TEST(
   }
 }
 
-STL_TEST("23.2.3 Table 100.3", ilConstruction, is_arithmetic) {
+STL_TEST("23.2.3 Table 100.3", ilConstruction, std::is_arithmetic) {
   // whitebox: ensure that Vector(il) is implemented in terms of
   // Vector(il.begin(), il.end())
 
@@ -2309,7 +2284,7 @@ STL_TEST("23.2.3 Table 100.3", ilConstruction, is_arithmetic) {
   }
 }
 
-STL_TEST("23.2.3 Table 100.4", ilAssignment, is_arithmetic, a) {
+STL_TEST("23.2.3 Table 100.4", ilAssignment, std::is_arithmetic, a) {
   // whitebox: ensure that assign(il) is implemented in terms of
   // assign(il.begin(), il.end())
 
@@ -2338,11 +2313,7 @@ STL_TEST("23.2.3 Table 100.4", ilAssignment, is_arithmetic, a) {
 
 template <class Vector>
 void insertNTCheck(
-    const Vector& a,
-    DataState<Vector>& dsa,
-    int idx,
-    int n,
-    int val) {
+    const Vector& a, DataState<Vector>& dsa, int idx, int n, int val) {
   ASSERT_EQ(dsa.size() + n, a.size());
   int i = 0;
   for (; i < idx; ++i) {
@@ -2380,6 +2351,12 @@ STL_TEST(
     a,
     p,
     t) {
+  if (folly::kIsSanitizeThread) {
+    // This test is too slow when running under TSAN that it times out.
+    // There's little value of running under TSAN as this test is
+    // single-threaded.
+    SKIP();
+  }
   DataState<Vector> dsa(a);
   int idx = distance(a.begin(), p);
   int tval = convertToInt(t);
@@ -2400,6 +2377,12 @@ STL_TEST(
     a,
     p,
     t) {
+  if (folly::kIsSanitizeThread) {
+    // This test is too slow when running under TSAN that it times out.
+    // There's little value of running under TSAN as this test is
+    // single-threaded.
+    SKIP();
+  }
   // rvalue-references cannot have their address checked for aliased inserts
   if (a.data() <= addressof(t) && addressof(t) < a.data() + a.size()) {
     return;
@@ -2425,6 +2408,12 @@ STL_TEST(
     p,
     n,
     t) {
+  if (folly::kIsSanitizeThread) {
+    // This test is too slow when running under TSAN that it times out.
+    // There's little value of running under TSAN as this test is
+    // single-threaded.
+    SKIP();
+  }
   DataState<Vector> dsa(a);
   int idx = distance(a.begin(), p);
   int tval = convertToInt(t);
@@ -2447,11 +2436,7 @@ STL_TEST(
 
 template <class Vector>
 void insertItCheck(
-    const Vector& a,
-    DataState<Vector>& dsa,
-    int idx,
-    int* b,
-    int* e) {
+    const Vector& a, DataState<Vector>& dsa, int idx, int* b, int* e) {
   ASSERT_EQ(dsa.size() + (e - b), a.size());
   int i = 0;
   for (; i < idx; ++i) {
@@ -2473,6 +2458,12 @@ STL_TEST(
     p,
     i,
     j) {
+  if (folly::kIsSanitizeThread) {
+    // This test is too slow when running under TSAN that it times out.
+    // There's little value of running under TSAN as this test is
+    // single-threaded.
+    SKIP();
+  }
   DataState<Vector> dsa(a);
   int idx = distance(a.begin(), p);
 
@@ -2504,6 +2495,12 @@ STL_TEST(
     p,
     i,
     j) {
+  if (folly::kIsSanitizeThread) {
+    // This test is too slow when running under TSAN that it times out.
+    // There's little value of running under TSAN as this test is
+    // single-threaded.
+    SKIP();
+  }
   DataState<Vector> dsa(a);
   int idx = distance(a.begin(), p);
 
@@ -2527,7 +2524,7 @@ STL_TEST(
   insertItCheck(a, dsa, idx, i, j);
 }
 
-STL_TEST("23.2.3 Table 100.10", iteratorInsertIL, is_arithmetic, a, p) {
+STL_TEST("23.2.3 Table 100.10", iteratorInsertIL, std::is_arithmetic, a, p) {
   // gcc fail
   if (Ticker::TicksLeft >= 0) {
     return;
@@ -2587,12 +2584,7 @@ STL_TEST("23.2.3 Table 100.11", iteratorErase, is_move_assignable, a, p) {
 }
 
 STL_TEST(
-    "23.2.3 Table 100.12",
-    iteratorEraseRange,
-    is_move_assignable,
-    a,
-    p,
-    q) {
+    "23.2.3 Table 100.12", iteratorEraseRange, is_move_assignable, a, p, q) {
   if (p == a.end()) {
     return;
   }
@@ -2662,7 +2654,7 @@ STL_TEST(
   }
 }
 
-STL_TEST("23.2.3 Table 100.15", assignIL, is_arithmetic, a) {
+STL_TEST("23.2.3 Table 100.15", assignIL, std::is_arithmetic, a) {
   // whitebox: ensure that assign(il) is implemented in terms of
   // assign(il.begin(), il.end())
 

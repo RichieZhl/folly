@@ -37,6 +37,15 @@
 #include <folly/portability/GTest.h>
 #include <folly/portability/SysMman.h>
 
+#if __has_include(<range/v3/range/concepts.hpp>)
+#include <range/v3/range/concepts.hpp>
+
+// Check conformance with the C++20 range concepts as specified
+// by the range-v3 library.
+CPP_assert(ranges::range<folly::StringPiece>);
+CPP_assert(ranges::view_<folly::StringPiece>);
+#endif
+
 using namespace folly;
 using namespace folly::detail;
 using namespace std;
@@ -875,12 +884,8 @@ TEST(StringPiece, split_step_with_process_range_delimiter_additional_args) {
 
 TEST(StringPiece, NoInvalidImplicitConversions) {
   struct IsString {
-    bool operator()(folly::Range<int*>) {
-      return false;
-    }
-    bool operator()(folly::StringPiece) {
-      return true;
-    }
+    bool operator()(folly::Range<int*>) { return false; }
+    bool operator()(folly::StringPiece) { return true; }
   };
 
   std::string s = "hello";
@@ -930,7 +935,7 @@ struct ByteSetNeedleFinder {
 
 using NeedleFinders =
     ::testing::Types<SseNeedleFinder, NoSseNeedleFinder, ByteSetNeedleFinder>;
-TYPED_TEST_CASE(NeedleFinderTest, NeedleFinders);
+TYPED_TEST_SUITE(NeedleFinderTest, NeedleFinders);
 
 TYPED_TEST(NeedleFinderTest, Null) {
   { // null characters in the string
@@ -1177,12 +1182,8 @@ TEST(RangeFunc, ConstexprCollection) {
   class IntCollection {
    public:
     constexpr IntCollection(const int* d, size_t s) : data_(d), size_(s) {}
-    constexpr const int* data() const {
-      return data_;
-    }
-    constexpr size_t size() const {
-      return size_;
-    }
+    constexpr const int* data() const { return data_; }
+    constexpr size_t size() const { return size_; }
 
    private:
     const int* data_;
@@ -1225,12 +1226,8 @@ TEST(CRangeFunc, Collection) {
   class IntCollection {
    public:
     constexpr IntCollection(int* d, size_t s) : data_(d), size_(s) {}
-    constexpr int const* data() const {
-      return data_;
-    }
-    constexpr size_t size() const {
-      return size_;
-    }
+    constexpr int const* data() const { return data_; }
+    constexpr size_t size() const { return size_; }
 
    private:
     int* data_;
@@ -1246,9 +1243,7 @@ TEST(CRangeFunc, Collection) {
 }
 
 std::string get_rand_str(
-    size_t size,
-    std::uniform_int_distribution<>& dist,
-    std::mt19937& gen) {
+    size_t size, std::uniform_int_distribution<>& dist, std::mt19937& gen) {
   std::string ret(size, '\0');
   for (size_t i = 0; i < size; ++i) {
     ret[i] = static_cast<char>(dist(gen));
@@ -1430,7 +1425,11 @@ TEST(Range, LiteralSuffix) {
   constexpr StringPiece piece = "hello";
   EXPECT_EQ(literalPiece, piece);
   constexpr auto literalPiece8 = u8"hello"_sp;
+#if __cpp_char8_t >= 201811L
+  constexpr Range<char8_t const*> piece8 = u8"hello";
+#else
   constexpr Range<char const*> piece8 = u8"hello";
+#endif
   EXPECT_EQ(literalPiece8, piece8);
   constexpr auto literalPiece16 = u"hello"_sp;
   constexpr Range<char16_t const*> piece16{u"hello", 5};
@@ -1458,9 +1457,7 @@ class fake_string_view {
   using size_type = std::size_t;
   explicit fake_string_view(char const* s, size_type c, fake_tag = {})
       : piece_(s, c) {}
-  /* implicit */ operator StringPiece() const {
-    return piece_;
-  }
+  /* implicit */ operator StringPiece() const { return piece_; }
   friend bool operator==(char const* rhs, fake_string_view lhs) {
     return rhs == lhs.piece_;
   }
@@ -1637,6 +1634,10 @@ TEST(StringPiece, StringViewConversion) {
   Range<std::deque<char>::const_iterator> deqRange{deq.begin(), deq.end()};
   TrickierTarget tt3(deqRange);
   EXPECT_EQ(tt3.which, 1);
+}
+
+TEST(StringPiece, Format) {
+  EXPECT_EQ("  foo", fmt::format("{:>5}", folly::StringPiece("foo")));
 }
 
 namespace {

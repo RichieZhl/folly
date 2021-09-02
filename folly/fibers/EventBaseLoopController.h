@@ -16,16 +16,18 @@
 
 #pragma once
 
-#include <folly/fibers/FiberManagerInternal.h>
-#include <folly/fibers/LoopController.h>
-#include <folly/io/async/VirtualEventBase.h>
 #include <atomic>
 #include <memory>
+
+#include <folly/CancellationToken.h>
+#include <folly/fibers/ExecutorBasedLoopController.h>
+#include <folly/fibers/FiberManagerInternal.h>
+#include <folly/io/async/VirtualEventBase.h>
 
 namespace folly {
 namespace fibers {
 
-class EventBaseLoopController : public LoopController {
+class EventBaseLoopController : public ExecutorBasedLoopController {
  public:
   explicit EventBaseLoopController();
   ~EventBaseLoopController() override;
@@ -36,13 +38,13 @@ class EventBaseLoopController : public LoopController {
   void attachEventBase(EventBase& eventBase);
   void attachEventBase(VirtualEventBase& eventBase);
 
-  VirtualEventBase* getEventBase() {
-    return eventBase_;
-  }
+  VirtualEventBase* getEventBase() { return eventBase_; }
 
   void setLoopRunner(InlineFunctionRunner* loopRunner) {
     loopRunner_ = loopRunner;
   }
+
+  folly::Executor* executor() const override { return eventBase_; }
 
  private:
   class ControllerCallback : public folly::EventBase::LoopCallback {
@@ -50,13 +52,13 @@ class EventBaseLoopController : public LoopController {
     explicit ControllerCallback(EventBaseLoopController& controller)
         : controller_(controller) {}
 
-    void runLoopCallback() noexcept override {
-      controller_.runLoop();
-    }
+    void runLoopCallback() noexcept override { controller_.runLoop(); }
 
    private:
     EventBaseLoopController& controller_;
   };
+
+  folly::CancellationToken eventBaseShutdownToken_;
 
   bool awaitingScheduling_{false};
   VirtualEventBase* eventBase_{nullptr};
@@ -71,8 +73,9 @@ class EventBaseLoopController : public LoopController {
   void setFiberManager(FiberManager* fm) override;
   void schedule() override;
   void runLoop() override;
+  void runEagerFiber(Fiber*) override;
   void scheduleThreadSafe() override;
-  HHWheelTimer& timer() override;
+  HHWheelTimer* timer() override;
 
   friend class FiberManager;
 };

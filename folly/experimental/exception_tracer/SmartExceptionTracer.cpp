@@ -23,13 +23,20 @@
 #include <folly/experimental/exception_tracer/StackTrace.h>
 #include <folly/experimental/symbolizer/Symbolizer.h>
 
+#if FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF
+
+#if defined(__GLIBCXX__)
+
 namespace folly {
 namespace exception_tracer {
 namespace {
 
 struct ExceptionMeta {
   void (*deleter)(void*);
+  // normal stack trace
   StackTrace trace;
+  // async stack trace
+  StackTrace traceAsync;
 };
 
 Synchronized<std::unordered_map<void*, ExceptionMeta>>& getMeta() {
@@ -57,18 +64,14 @@ void metaDeleter(void* ex) noexcept {
 // trace. To manage the lifetime of the stack trace we override the deleter with
 // our own wrapper.
 void throwCallback(
-    void* ex,
-    std::type_info*,
-    void (**deleter)(void*)) noexcept {
+    void* ex, std::type_info*, void (**deleter)(void*)) noexcept {
   // Make this code reentrant safe in case we throw an exception while
   // handling an exception. Thread local variables are zero initialized.
-  static FOLLY_TLS bool handlingThrow;
+  static thread_local bool handlingThrow;
   if (handlingThrow) {
     return;
   }
-  SCOPE_EXIT {
-    handlingThrow = false;
-  };
+  SCOPE_EXIT { handlingThrow = false; };
   handlingThrow = true;
 
   getMeta().withWLockPtr([&](auto wlock) noexcept {
@@ -84,40 +87,28 @@ void throwCallback(
       if (n != -1) {
         meta.trace.frameCount = n;
       }
+      ssize_t nAsync = symbolizer::getAsyncStackTraceSafe(
+          meta.traceAsync.addresses, kMaxFrames);
+      if (nAsync != -1) {
+        meta.traceAsync.frameCount = nAsync;
+      }
     } catch (const std::bad_alloc&) {
     }
   });
 }
 
 struct Initialize {
-  Initialize() {
-    registerCxaThrowCallback(throwCallback);
-  }
+  Initialize() { registerCxaThrowCallback(throwCallback); }
 };
 
 Initialize initialize;
-} // namespace
 
-ExceptionInfo getTrace(const std::exception_ptr& ptr) {
-  try {
-    // To get a pointer to the actual exception we need to rethrow the
-    // exception_ptr and catch it.
-    std::rethrow_exception(ptr);
-  } catch (std::exception& ex) {
-    return getTrace(ex);
-  } catch (...) {
-    return ExceptionInfo();
-  }
-}
-
-ExceptionInfo getTrace(const exception_wrapper& ew) {
-  if (auto* ex = ew.get_exception()) {
-    return getTrace(*ex);
-  }
-  return ExceptionInfo();
-}
-
-ExceptionInfo getTrace(const std::exception& ex) {
+// ExceptionMetaFunc takes a `const ExceptionMeta&` and
+// returns a pair of iterators to represent a range of addresses for
+// the stack frames to use.
+template <typename ExceptionMetaFunc>
+ExceptionInfo getTraceWithFunc(
+    const std::exception& ex, ExceptionMetaFunc func) {
   ExceptionInfo info;
   info.type = &typeid(ex);
   getMeta().withRLock([&](auto& locked) noexcept {
@@ -126,11 +117,76 @@ ExceptionInfo getTrace(const std::exception& ex) {
     if (!meta) {
       return;
     }
-    info.frames.assign(
-        meta->trace.addresses, meta->trace.addresses + meta->trace.frameCount);
+
+    auto [traceBeginIt, traceEndIt] = func(*meta);
+    info.frames.assign(traceBeginIt, traceEndIt);
   });
   return info;
 }
 
+template <typename ExceptionMetaFunc>
+ExceptionInfo getTraceWithFunc(
+    const std::exception_ptr& ptr, ExceptionMetaFunc func) {
+  try {
+    // To get a pointer to the actual exception we need to rethrow the
+    // exception_ptr and catch it.
+    std::rethrow_exception(ptr);
+  } catch (std::exception& ex) {
+    return getTraceWithFunc(ex, std::move(func));
+  } catch (...) {
+    return ExceptionInfo();
+  }
+}
+
+template <typename ExceptionMetaFunc>
+ExceptionInfo getTraceWithFunc(
+    const exception_wrapper& ew, ExceptionMetaFunc func) {
+  if (auto* ex = ew.get_exception()) {
+    return getTraceWithFunc(*ex, std::move(func));
+  }
+  return ExceptionInfo();
+}
+
+auto getAsyncStackTraceItPair(const ExceptionMeta& meta) {
+  return std::make_pair(
+      meta.traceAsync.addresses,
+      meta.traceAsync.addresses + meta.traceAsync.frameCount);
+}
+
+auto getNormalStackTraceItPair(const ExceptionMeta& meta) {
+  return std::make_pair(
+      meta.trace.addresses, meta.trace.addresses + meta.trace.frameCount);
+}
+
+} // namespace
+
+ExceptionInfo getTrace(const std::exception_ptr& ptr) {
+  return getTraceWithFunc(ptr, getNormalStackTraceItPair);
+}
+
+ExceptionInfo getTrace(const exception_wrapper& ew) {
+  return getTraceWithFunc(ew, getNormalStackTraceItPair);
+}
+
+ExceptionInfo getTrace(const std::exception& ex) {
+  return getTraceWithFunc(ex, getNormalStackTraceItPair);
+}
+
+ExceptionInfo getAsyncTrace(const std::exception_ptr& ptr) {
+  return getTraceWithFunc(ptr, getAsyncStackTraceItPair);
+}
+
+ExceptionInfo getAsyncTrace(const exception_wrapper& ew) {
+  return getTraceWithFunc(ew, getAsyncStackTraceItPair);
+}
+
+ExceptionInfo getAsyncTrace(const std::exception& ex) {
+  return getTraceWithFunc(ex, getAsyncStackTraceItPair);
+}
+
 } // namespace exception_tracer
 } // namespace folly
+
+#endif // defined(__GLIBCXX__)
+
+#endif // FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF

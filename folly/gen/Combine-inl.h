@@ -36,7 +36,7 @@ namespace detail {
 template <class Container>
 class Interleave : public Operator<Interleave<Container>> {
   // see comment about copies in CopiedSource
-  const std::shared_ptr<const Container> container_;
+  const std::shared_ptr<Container> container_;
 
  public:
   explicit Interleave(Container container)
@@ -45,30 +45,24 @@ class Interleave : public Operator<Interleave<Container>> {
   template <class Value, class Source>
   class Generator : public GenImpl<Value, Generator<Value, Source>> {
     Source source_;
-    const std::shared_ptr<const Container> container_;
-    typedef const typename Container::value_type& ConstRefType;
-
-    static_assert(
-        std::is_same<const Value&, ConstRefType>::value,
-        "Only matching types may be interleaved");
+    const std::shared_ptr<Container> container_;
 
    public:
     explicit Generator(
-        Source source,
-        const std::shared_ptr<const Container> container)
+        Source source, const std::shared_ptr<Container> container)
         : source_(std::move(source)), container_(container) {}
 
     template <class Handler>
     bool apply(Handler&& handler) const {
       auto iter = container_->begin();
-      return source_.apply([&](const Value& value) -> bool {
+      return source_.apply([&](Value value) -> bool {
         if (iter == container_->end()) {
           return false;
         }
-        if (!handler(value)) {
+        if (!handler(std::forward<Value>(value))) {
           return false;
         }
-        if (!handler(*iter)) {
+        if (!handler(std::move(*iter))) {
           return false;
         }
         iter++;
@@ -98,43 +92,41 @@ class Interleave : public Operator<Interleave<Container>> {
 template <class Container>
 class Zip : public Operator<Zip<Container>> {
   // see comment about copies in CopiedSource
-  const std::shared_ptr<const Container> container_;
+  const std::shared_ptr<Container> container_;
 
  public:
   explicit Zip(Container container)
       : container_(new Container(std::move(container))) {}
 
   template <
-      class Value1,
+      class Value,
       class Source,
-      class Value2 = decltype(*std::begin(*container_)),
       class Result = std::tuple<
-          typename std::decay<Value1>::type,
-          typename std::decay<Value2>::type>>
-  class Generator
-      : public GenImpl<Result, Generator<Value1, Source, Value2, Result>> {
+          typename std::decay<Value>::type,
+          typename std::decay<typename Container::value_type>::type>>
+  class Generator : public GenImpl<Result, Generator<Value, Source, Result>> {
     Source source_;
-    const std::shared_ptr<const Container> container_;
+    const std::shared_ptr<Container> container_;
 
    public:
     explicit Generator(
-        Source source,
-        const std::shared_ptr<const Container> container)
+        Source source, const std::shared_ptr<Container> container)
         : source_(std::move(source)), container_(container) {}
 
     template <class Handler>
     bool apply(Handler&& handler) const {
       auto iter = container_->begin();
-      return (source_.apply([&](Value1 value) -> bool {
+      return source_.apply([&](Value value) -> bool {
         if (iter == container_->end()) {
           return false;
         }
-        if (!handler(std::make_tuple(std::forward<Value1>(value), *iter))) {
+        if (!handler(std::make_tuple(
+                std::forward<Value>(value), std::move(*iter)))) {
           return false;
         }
         ++iter;
         return true;
-      }));
+      });
     }
   };
 
@@ -156,22 +148,24 @@ auto add_to_tuple(std::tuple<Types1...> t1, std::tuple<Types2...> t2)
 }
 
 template <class... Types1, class Type2>
-auto add_to_tuple(std::tuple<Types1...> t1, Type2&& t2) -> decltype(
-    std::tuple_cat(std::move(t1), std::make_tuple(std::forward<Type2>(t2)))) {
+auto add_to_tuple(std::tuple<Types1...> t1, Type2&& t2)
+    -> decltype(std::tuple_cat(
+        std::move(t1), std::make_tuple(std::forward<Type2>(t2)))) {
   return std::tuple_cat(
       std::move(t1), std::make_tuple(std::forward<Type2>(t2)));
 }
 
 template <class Type1, class... Types2>
-auto add_to_tuple(Type1&& t1, std::tuple<Types2...> t2) -> decltype(
-    std::tuple_cat(std::make_tuple(std::forward<Type1>(t1)), std::move(t2))) {
+auto add_to_tuple(Type1&& t1, std::tuple<Types2...> t2)
+    -> decltype(std::tuple_cat(
+        std::make_tuple(std::forward<Type1>(t1)), std::move(t2))) {
   return std::tuple_cat(
       std::make_tuple(std::forward<Type1>(t1)), std::move(t2));
 }
 
 template <class Type1, class Type2>
-auto add_to_tuple(Type1&& t1, Type2&& t2) -> decltype(
-    std::make_tuple(std::forward<Type1>(t1), std::forward<Type2>(t2))) {
+auto add_to_tuple(Type1&& t1, Type2&& t2) -> decltype(std::make_tuple(
+    std::forward<Type1>(t1), std::forward<Type2>(t2))) {
   return std::make_tuple(std::forward<Type1>(t1), std::forward<Type2>(t2));
 }
 

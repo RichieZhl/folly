@@ -17,12 +17,19 @@
 #include <cstring>
 
 #include <folly/experimental/TestUtil.h>
+#include <folly/experimental/coro/BlockingWait.h>
+#include <folly/experimental/coro/Task.h>
 #include <folly/experimental/symbolizer/StackTrace.h>
 #include <folly/experimental/symbolizer/Symbolizer.h>
+#include <folly/test/TestUtils.h>
+
+#include <boost/regex.hpp>
 
 #include <glog/logging.h>
 
 #include <folly/portability/GTest.h>
+
+#if FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF
 
 using namespace folly;
 using namespace folly::symbolizer;
@@ -38,7 +45,11 @@ void verifyStackTraces() {
   FrameArray<kMaxAddresses> faSafe;
   CHECK(getStackTraceSafe(faSafe));
 
+  FrameArray<kMaxAddresses> faHeap;
+  CHECK(getStackTraceHeap(faHeap));
+
   CHECK_EQ(fa.frameCount, faSafe.frameCount);
+  CHECK_EQ(fa.frameCount, faHeap.frameCount);
 
   if (VLOG_IS_ON(1)) {
     Symbolizer symbolizer;
@@ -51,14 +62,19 @@ void verifyStackTraces() {
     symbolizer.symbolize(faSafe);
     VLOG(1) << "getStackTraceSafe\n";
     printer.println(faSafe);
+
+    symbolizer.symbolize(faHeap);
+    VLOG(1) << "getStackTraceHeap\n";
+    printer.println(faHeap);
   }
 
   // Other than the top 2 frames (this one and getStackTrace /
   // getStackTraceSafe), the stack traces should be identical
   for (size_t i = 2; i < fa.frameCount; ++i) {
     LOG(INFO) << "i=" << i << " " << std::hex << "0x" << fa.addresses[i]
-              << " 0x" << faSafe.addresses[i];
+              << " 0x" << faSafe.addresses[i] << " 0x" << faHeap.addresses[i];
     EXPECT_EQ(fa.addresses[i], faSafe.addresses[i]);
+    EXPECT_EQ(fa.addresses[i], faHeap.addresses[i]);
   }
 }
 
@@ -83,6 +99,11 @@ TEST(StackTraceTest, Simple) {
 }
 
 TEST(StackTraceTest, Signal) {
+  if (folly::kIsSanitizeThread) {
+    // TSAN doesn't like signal-unsafe functions in a signal handler regardless
+    // of how the signal is raised. So skip the test in that case.
+    SKIP() << "Not supported for TSAN";
+  }
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
   sa.sa_sigaction = handler;
@@ -150,7 +171,7 @@ void testStackTracePrinter(StackTracePrinter& printer, int fd) {
 TEST(StackTraceTest, SafeStackTracePrinter) {
   test::TemporaryFile file;
 
-  SafeStackTracePrinter printer{10, file.fd()};
+  SafeStackTracePrinter printer{file.fd()};
 
   testStackTracePrinter<SafeStackTracePrinter>(printer, file.fd());
 }
@@ -163,3 +184,150 @@ TEST(StackTraceTest, FastStackTracePrinter) {
 
   testStackTracePrinter<FastStackTracePrinter>(printer, file.fd());
 }
+
+TEST(StackTraceTest, TerseStackTracePrinter) {
+  test::TemporaryFile file;
+
+  FastStackTracePrinter printer{
+      std::make_unique<FDSymbolizePrinter>(file.fd(), SymbolizePrinter::TERSE)};
+
+  testStackTracePrinter<FastStackTracePrinter>(printer, file.fd());
+}
+
+TEST(StackTraceTest, TerseFileAndLineStackTracePrinter) {
+  test::TemporaryFile file;
+
+  FastStackTracePrinter printer{std::make_unique<FDSymbolizePrinter>(
+      file.fd(), SymbolizePrinter::TERSE_FILE_AND_LINE)};
+
+  testStackTracePrinter<FastStackTracePrinter>(printer, file.fd());
+}
+
+namespace {
+constexpr int frames = 5;
+FOLLY_NOINLINE void foo(FrameArray<frames>& addresses) {
+  getStackTraceSafe(addresses);
+}
+
+FOLLY_NOINLINE void bar(FrameArray<frames>& addresses) {
+  foo(addresses);
+}
+
+FOLLY_NOINLINE void baz(FrameArray<frames>& addresses) {
+  bar(addresses);
+}
+} // namespace
+
+TEST(StackTraceTest, TerseFileAndLineStackTracePrinterOutput) {
+  SKIP_IF(!Symbolizer::isAvailable());
+
+  Symbolizer symbolizer(LocationInfoMode::FULL);
+  FrameArray<frames> addresses;
+  StringSymbolizePrinter printer(SymbolizePrinter::TERSE_FILE_AND_LINE);
+  baz(addresses);
+  symbolizer.symbolize(addresses);
+  printer.println(addresses, 0);
+
+  // Match a sequence of file+line results that should appear as:
+  // ./folly/experimental/symbolizer/test/StackTraceTest.cpp:202
+  // or:
+  // (unknown)
+  boost::regex regex("((([^:]*:[0-9]*)|(\\(unknown\\)))\n)+");
+  auto match = boost::regex_match(
+      printer.str(), regex, boost::regex_constants::match_not_dot_newline);
+
+  ASSERT_TRUE(match);
+}
+
+namespace {
+void verifyAsyncStackTraces() {
+  constexpr size_t kMaxAddresses = 100;
+  FrameArray<kMaxAddresses> fa;
+  CHECK(getAsyncStackTraceSafe(fa));
+
+  CHECK_GT(fa.frameCount, 0);
+
+  Symbolizer symbolizer;
+  symbolizer.symbolize(fa);
+  symbolizer::StringSymbolizePrinter printer;
+  printer.println(fa);
+  auto stackTraceStr = printer.str();
+
+  if (VLOG_IS_ON(1)) {
+    VLOG(1) << "getAsyncStackTrace\n" << stackTraceStr;
+  }
+
+  // These functions should appear in this relative order
+  std::vector<std::string> funcNames{
+      "funcF",
+      "funcE",
+      "co_funcD",
+      "co_funcC",
+      "funcB2_blocking",
+      "funcB1",
+      "co_funcB0",
+      "co_funcA2",
+      "co_funcA1",
+      "co_funcA0",
+  };
+  std::vector<size_t> positions;
+  for (const auto& funcName : funcNames) {
+    SCOPED_TRACE(funcName);
+    auto pos = stackTraceStr.find(funcName);
+    ASSERT_NE(pos, std::string::npos);
+    positions.push_back(pos);
+  }
+  for (size_t i = 0; i < positions.size() - 1; ++i) {
+    ASSERT_LT(positions[i], positions[i + 1]);
+  }
+}
+
+FOLLY_NOINLINE void funcF() {
+  verifyAsyncStackTraces();
+}
+
+FOLLY_NOINLINE void funcE() {
+  funcF();
+}
+
+FOLLY_NOINLINE folly::coro::Task<void> co_funcD() {
+  funcE();
+  co_return;
+}
+
+FOLLY_NOINLINE folly::coro::Task<void> co_funcC() {
+  co_await co_funcD();
+}
+
+FOLLY_NOINLINE void funcB2_blocking() {
+  // This should trigger a new AsyncStackRoot
+  folly::coro::blockingWait(co_funcC());
+}
+
+FOLLY_NOINLINE void funcB1() {
+  funcB2_blocking();
+}
+
+FOLLY_NOINLINE folly::coro::Task<void> co_funcB0() {
+  funcB1();
+  co_return;
+}
+
+FOLLY_NOINLINE folly::coro::Task<void> co_funcA2() {
+  co_await co_funcB0();
+}
+
+FOLLY_NOINLINE folly::coro::Task<void> co_funcA1() {
+  co_await co_funcA2();
+}
+
+FOLLY_NOINLINE folly::coro::Task<void> co_funcA0() {
+  co_await co_funcA1();
+}
+} // namespace
+
+TEST(StackTraceTest, AsyncStackTraceSimple) {
+  folly::coro::blockingWait(co_funcA0());
+}
+
+#endif // FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF

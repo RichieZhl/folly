@@ -14,53 +14,30 @@
  * limitations under the License.
  */
 
-#include <folly/io/async/AsyncSignalHandler.h>
-#include <folly/io/async/EventBase.h>
+#include <folly/io/async/test/AsyncSignalHandlerTestLib.h>
 
-#include <folly/portability/GTest.h>
-
-using namespace folly;
-
-namespace {
-class TestSignalHandler : public AsyncSignalHandler {
- public:
-  using AsyncSignalHandler::AsyncSignalHandler;
-
-  void signalReceived(int /* signum */) noexcept override {
-    called = true;
+namespace folly {
+namespace test {
+struct DefaultBackendProvider {
+  static std::unique_ptr<folly::EventBaseBackendBase> getBackend() {
+    return folly::EventBase::getDefaultBackend();
   }
-
-  bool called{false};
 };
-} // namespace
 
-TEST(AsyncSignalHandler, basic) {
-  EventBase evb;
-  TestSignalHandler handler{&evb};
+INSTANTIATE_TYPED_TEST_CASE_P(
+    AsyncSignalHandlerTest, AsyncSignalHandlerTest, DefaultBackendProvider);
 
-  handler.registerSignalHandler(SIGUSR1);
-  kill(getpid(), SIGUSR1);
+TEST(AsyncSignalHandler, destructionOrder) {
+  auto evb = std::make_unique<EventBase>();
+  TestSignalHandler handler(evb.get());
+  handler.registerSignalHandler(SIGHUP);
 
-  EXPECT_FALSE(handler.called);
-  evb.loopOnce(EVLOOP_NONBLOCK);
-  EXPECT_TRUE(handler.called);
+  // Test a situation where the EventBase is destroyed with an
+  // AsyncSignalHandler still installed.  Destroying the AsyncSignalHandler
+  // after the EventBase should work normally and should not crash or access
+  // invalid memory.
+  evb.reset();
 }
 
-TEST(AsyncSignalHandler, attachEventBase) {
-  TestSignalHandler handler{nullptr};
-  EXPECT_FALSE(handler.getEventBase());
-  EventBase evb;
-
-  handler.attachEventBase(&evb);
-  EXPECT_EQ(&evb, handler.getEventBase());
-
-  handler.registerSignalHandler(SIGUSR1);
-  kill(getpid(), SIGUSR1);
-  EXPECT_FALSE(handler.called);
-  evb.loopOnce(EVLOOP_NONBLOCK);
-  EXPECT_TRUE(handler.called);
-
-  handler.unregisterSignalHandler(SIGUSR1);
-  handler.detachEventBase();
-  EXPECT_FALSE(handler.getEventBase());
-}
+} // namespace test
+} // namespace folly

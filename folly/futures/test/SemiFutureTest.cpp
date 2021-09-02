@@ -14,6 +14,15 @@
  * limitations under the License.
  */
 
+#include <algorithm>
+#include <atomic>
+#include <future>
+#include <memory>
+#include <numeric>
+#include <string>
+#include <thread>
+#include <type_traits>
+
 #include <folly/Executor.h>
 #include <folly/Memory.h>
 #include <folly/Unit.h>
@@ -23,15 +32,6 @@
 #include <folly/io/async/EventBase.h>
 #include <folly/portability/GTest.h>
 #include <folly/synchronization/Baton.h>
-
-#include <algorithm>
-#include <atomic>
-#include <future>
-#include <memory>
-#include <numeric>
-#include <string>
-#include <thread>
-#include <type_traits>
 
 using namespace folly;
 
@@ -450,7 +450,6 @@ TEST(SemiFuture, MakeFutureFromSemiFutureReturnSemiFuture) {
   EXPECT_FALSE(future.isReady());
   p.setValue(42);
   e.loopOnce();
-  e.loopOnce();
   EXPECT_TRUE(future.isReady());
   ASSERT_EQ(future.value(), 42);
   ASSERT_EQ(result, 42);
@@ -618,7 +617,7 @@ TEST(SemiFuture, DeferWithVia) {
   // Run "F" here inline in the calling thread
   auto tf = std::move(sf).via(&e2);
   p.setValue();
-  tf.getVia(&e2);
+  std::move(tf).getVia(&e2);
   ASSERT_EQ(innerResult, 17);
 }
 
@@ -631,7 +630,7 @@ TEST(SemiFuture, ChainingDefertoThen) {
   // Run "F" here inline in a task running on the eventbase
   auto tf = std::move(sf).via(&e2).thenValue([&](auto&&) { result = 42; });
   p.setValue();
-  tf.getVia(&e2);
+  std::move(tf).getVia(&e2);
   ASSERT_EQ(innerResult, 17);
   ASSERT_EQ(result, 42);
 }
@@ -672,7 +671,7 @@ TEST(SemiFuture, ChainingDefertoThenWithValue) {
   // Run "F" here inline in a task running on the eventbase
   auto tf = std::move(sf).via(&e2).thenValue([&](int a) { result = a; });
   p.setValue(7);
-  tf.getVia(&e2);
+  std::move(tf).getVia(&e2);
   ASSERT_EQ(innerResult, 7);
   ASSERT_EQ(result, 7);
 }
@@ -715,7 +714,7 @@ TEST(SemiFuture, DeferWithinContinuation) {
             });
       });
   p.setValue(7);
-  auto r = resultF.getVia(&e2);
+  auto r = std::move(resultF).getVia(&e2);
   ASSERT_EQ(r, 7);
   ASSERT_EQ(innerResult, 7);
   ASSERT_EQ(result, 7);
@@ -728,13 +727,13 @@ TEST(SemiFuture, onError) {
   do {                    \
     EXPECT_TRUE(theFlag); \
     theFlag = false;      \
-  } while (0);
+  } while (0)
 
 #define EXPECT_NO_FLAG()   \
   do {                     \
     EXPECT_FALSE(theFlag); \
     theFlag = false;       \
-  } while (0);
+  } while (0)
 
   // By reference
   {
@@ -796,7 +795,7 @@ TEST(SemiFuture, onError) {
   // Non-exceptions
   {
     auto f = makeSemiFuture()
-                 .defer([](auto&&) { throw - 1; })
+                 .defer([](auto&&) { throw -1; })
                  .deferError(tag_t<int>{}, [&](auto /* e */) { flag(); });
     EXPECT_NO_THROW(std::move(f).get());
     EXPECT_FLAG();
@@ -816,24 +815,22 @@ TEST(SemiFuture, onError) {
   // Function pointer
   {
     auto f = makeSemiFuture()
-                 .defer([](auto &&) -> int { throw eggs; })
+                 .defer([](auto&&) -> int { throw eggs; })
                  .deferError(tag_t<eggs_t>{}, onErrorHelperEggs)
                  .deferError(onErrorHelperGeneric);
     EXPECT_EQ(10, std::move(f).get());
   }
   {
-    auto f =
-        makeSemiFuture()
-            .defer([](auto &&) -> int { throw std::runtime_error("test"); })
-            .deferError(tag_t<eggs_t>{}, onErrorHelperEggs)
-            .deferError(onErrorHelperGeneric);
+    auto f = makeSemiFuture()
+                 .defer([](auto&&) -> int { throw std::runtime_error("test"); })
+                 .deferError(tag_t<eggs_t>{}, onErrorHelperEggs)
+                 .deferError(onErrorHelperGeneric);
     EXPECT_EQ(20, std::move(f).get());
   }
   {
-    auto f =
-        makeSemiFuture()
-            .defer([](auto &&) -> int { throw std::runtime_error("test"); })
-            .deferError(tag_t<eggs_t>{}, onErrorHelperEggs);
+    auto f = makeSemiFuture()
+                 .defer([](auto&&) -> int { throw std::runtime_error("test"); })
+                 .deferError(tag_t<eggs_t>{}, onErrorHelperEggs);
     EXPECT_THROW(std::move(f).get(), std::runtime_error);
   }
 
@@ -864,7 +861,7 @@ TEST(SemiFuture, onError) {
   // Returned value propagates
   {
     auto f = makeSemiFuture()
-                 .defer([](auto &&) -> int { throw eggs; })
+                 .defer([](auto&&) -> int { throw eggs; })
                  .deferError(
                      tag_t<eggs_t>{}, [&](auto const& /* e */) { return 42; });
     EXPECT_EQ(42, std::move(f).get());
@@ -873,7 +870,7 @@ TEST(SemiFuture, onError) {
   // Throw in callback
   {
     auto f = makeSemiFuture()
-                 .defer([](auto &&) -> int { throw eggs; })
+                 .defer([](auto&&) -> int { throw eggs; })
                  .deferError(
                      tag_t<eggs_t>{}, [&](auto const& e) -> int { throw e; });
     EXPECT_THROW(std::move(f).get(), eggs_t);
@@ -882,7 +879,7 @@ TEST(SemiFuture, onError) {
   // exception_wrapper, return T
   {
     auto f = makeSemiFuture()
-                 .defer([](auto &&) -> int { throw eggs; })
+                 .defer([](auto&&) -> int { throw eggs; })
                  .deferError([&](exception_wrapper /* e */) {
                    flag();
                    return -1;
@@ -894,7 +891,7 @@ TEST(SemiFuture, onError) {
   // exception_wrapper, return T but throw
   {
     auto f = makeSemiFuture()
-                 .defer([](auto &&) -> int { throw eggs; })
+                 .defer([](auto&&) -> int { throw eggs; })
                  .deferError([&](exception_wrapper /* e */) -> int {
                    flag();
                    throw eggs;
@@ -922,15 +919,9 @@ TEST(SemiFuture, makePromiseContract) {
 
 TEST(SemiFuture, invokeCallbackWithOriginalCVRef) {
   struct Foo {
-    int operator()(int x) & {
-      return x + 1;
-    }
-    int operator()(int x) const& {
-      return x + 2;
-    }
-    int operator()(int x) && {
-      return x + 3;
-    }
+    int operator()(int x) & { return x + 1; }
+    int operator()(int x) const& { return x + 2; }
+    int operator()(int x) && { return x + 3; }
   };
 
   Foo foo;
@@ -972,17 +963,17 @@ TEST(SemiFuture, semiFutureWithinNoValueReferenceWhenTimeOut) {
 
   auto f = promise.getSemiFuture().within(veryShort).toUnsafeFuture().thenTry(
       [](folly::Try<std::shared_ptr<int>>&& callbackInput) {
-        EXPECT_THROW(callbackInput.throwIfFailed(), FutureTimeout);
+        EXPECT_THROW(callbackInput.throwUnlessValue(), FutureTimeout);
       });
   std::move(f).get();
 }
 
-TEST(SemiFuture, collectAllSemiFutureDeferredWork) {
+TEST(SemiFuture, collectAllDeferredWork) {
   {
     Promise<int> promise1;
     Promise<int> promise2;
 
-    auto future = collectAllSemiFuture(
+    auto future = collectAll(
         promise1.getSemiFuture().deferValue([](int x) { return x * 2; }),
         promise2.getSemiFuture().deferValue([](int x) { return x * 2; }));
 
@@ -1001,7 +992,7 @@ TEST(SemiFuture, collectAllSemiFutureDeferredWork) {
     Promise<int> promise1;
     Promise<int> promise2;
 
-    auto future = collectAllSemiFuture(
+    auto future = collectAll(
         promise1.getSemiFuture().deferValue([](int x) { return x * 2; }),
         promise2.getSemiFuture().deferValue([](int x) { return x * 2; }));
 
@@ -1026,7 +1017,7 @@ TEST(SemiFuture, collectAllSemiFutureDeferredWork) {
     futures.push_back(
         promise2.getSemiFuture().deferValue([](int x) { return x * 2; }));
 
-    auto future = collectAllSemiFuture(futures);
+    auto future = collectAll(futures);
 
     promise1.setValue(1);
     promise2.setValue(2);
@@ -1044,7 +1035,7 @@ TEST(SemiFuture, collectAllSemiFutureDeferredWork) {
     {
       Promise<int> promise;
       auto guard = makeGuard([&] { deferredDestroyed = true; });
-      collectAllSemiFuture(promise.getSemiFuture().deferValue(
+      collectAll(promise.getSemiFuture().deferValue(
           [guard = std::move(guard)](int x) { return x; }));
     }
 
@@ -1052,12 +1043,12 @@ TEST(SemiFuture, collectAllSemiFutureDeferredWork) {
   }
 }
 
-TEST(SemiFuture, collectSemiFutureDeferredWork) {
+TEST(SemiFuture, collectDeferredWork) {
   {
     Promise<int> promise1;
     Promise<int> promise2;
 
-    auto future = collectSemiFuture(
+    auto future = collect(
         promise1.getSemiFuture().deferValue([](int x) { return x * 2; }),
         promise2.getSemiFuture().deferValue([](int x) { return x * 2; }));
 
@@ -1076,7 +1067,7 @@ TEST(SemiFuture, collectSemiFutureDeferredWork) {
     Promise<int> promise1;
     Promise<int> promise2;
 
-    auto future = collectSemiFuture(
+    auto future = collect(
         promise1.getSemiFuture().deferValue([](int x) { return x * 2; }),
         promise2.getSemiFuture().deferValue([](int x) { return x * 2; }));
 
@@ -1101,7 +1092,7 @@ TEST(SemiFuture, collectSemiFutureDeferredWork) {
     futures.push_back(
         promise2.getSemiFuture().deferValue([](int x) { return x * 2; }));
 
-    auto future = collectSemiFuture(futures);
+    auto future = collect(futures);
 
     promise1.setValue(1);
     promise2.setValue(2);
@@ -1119,7 +1110,7 @@ TEST(SemiFuture, collectSemiFutureDeferredWork) {
     {
       Promise<int> promise;
       auto guard = makeGuard([&] { deferredDestroyed = true; });
-      collectSemiFuture(promise.getSemiFuture().deferValue(
+      collect(promise.getSemiFuture().deferValue(
           [guard = std::move(guard)](int x) { return x; }));
     }
 

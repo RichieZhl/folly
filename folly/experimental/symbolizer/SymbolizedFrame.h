@@ -16,39 +16,34 @@
 
 #pragma once
 
-#include <array>
 #include <cstdint>
 #include <memory>
+#include <ostream>
 #include <string>
 
 #include <folly/Range.h>
-#include <folly/experimental/symbolizer/Elf.h>
 
 namespace folly {
 namespace symbolizer {
 
+class ElfFile;
+
 /**
- * Represent a file path a s collection of three parts (base directory,
+ * Represent a file path as a collection of three parts (base directory,
  * subdirectory, and file).
  */
 class Path {
  public:
-  Path() {}
+  Path() = default;
 
   Path(
       folly::StringPiece baseDir,
       folly::StringPiece subDir,
       folly::StringPiece file);
 
-  folly::StringPiece baseDir() const {
-    return baseDir_;
-  }
-  folly::StringPiece subDir() const {
-    return subDir_;
-  }
-  folly::StringPiece file() const {
-    return file_;
-  }
+  folly::StringPiece baseDir() const { return baseDir_; }
+  folly::StringPiece subDir() const { return subDir_; }
+  folly::StringPiece file() const { return file_; }
 
   size_t size() const;
 
@@ -98,8 +93,6 @@ enum class LocationInfoMode {
 struct LocationInfo {
   bool hasFileAndLine = false;
   bool hasMainFile = false;
-  // Function name in call stack.
-  folly::StringPiece name;
   Path mainFile;
   Path file;
   uint64_t line = 0;
@@ -116,14 +109,12 @@ struct SymbolizedFrame {
   LocationInfo location;
   std::shared_ptr<ElfFile> file;
 
-  void clear() {
-    *this = SymbolizedFrame();
-  }
+  void clear() { *this = SymbolizedFrame(); }
 };
 
 template <size_t N>
 struct FrameArray {
-  FrameArray() {}
+  FrameArray() = default;
 
   size_t frameCount = 0;
   uintptr_t addresses[N];

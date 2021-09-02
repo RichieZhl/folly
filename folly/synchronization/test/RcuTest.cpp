@@ -41,9 +41,7 @@ class des {
 
  public:
   des(bool* d) : d_(d) {}
-  ~des() {
-    *d_ = true;
-  }
+  ~des() { *d_ = true; }
 };
 
 TEST(RcuTest, Guard) {
@@ -53,32 +51,6 @@ TEST(RcuTest, Guard) {
   rcu_retire(foo);
   synchronize_rcu();
   EXPECT_TRUE(del);
-}
-
-TEST(RcuTest, Perf) {
-  long i = FLAGS_iters;
-  auto start = std::chrono::steady_clock::now();
-  while (i-- > 0) {
-    rcu_reader g;
-  }
-  auto diff = std::chrono::steady_clock::now() - start;
-  printf(
-      "Total time %li ns \n",
-      std::chrono::duration_cast<std::chrono::nanoseconds>(diff).count() /
-          FLAGS_iters);
-}
-
-TEST(RcuTest, ResetPerf) {
-  long i = FLAGS_iters;
-  auto start = std::chrono::steady_clock::now();
-  while (i-- > 0) {
-    rcu_retire<int>(nullptr, [](int*) {});
-  }
-  auto diff = std::chrono::steady_clock::now() - start;
-  printf(
-      "Total time %li ns \n",
-      std::chrono::duration_cast<std::chrono::nanoseconds>(diff).count() /
-          FLAGS_iters);
 }
 
 TEST(RcuTest, SlowReader) {
@@ -279,13 +251,34 @@ TEST(RcuTest, RcuObjBase) {
   struct base_test : rcu_obj_base<base_test> {
     bool* ret_;
     base_test(bool* ret) : ret_(ret) {}
-    ~base_test() {
-      (*ret_) = true;
-    }
+    ~base_test() { (*ret_) = true; }
   };
 
   auto foo = new base_test(&retired);
   foo->retire();
   synchronize_rcu();
   EXPECT_TRUE(retired);
+}
+
+TEST(RcuTest, Tsan) {
+  int data = 0;
+  std::thread t1([&] {
+    auto epoch = rcu_default_domain()->lock_shared();
+    data = 1;
+    rcu_default_domain()->unlock_shared(std::move(epoch));
+    // Delay before exiting so the thread is still alive for TSAN detection.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  });
+
+  std::thread t2([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // This should establish a happens-before relationship between the earlier
+    // write (data = 1) and this write below (data = 2).
+    rcu_default_domain()->synchronize();
+    data = 2;
+  });
+
+  t1.join();
+  t2.join();
+  EXPECT_EQ(data, 2);
 }

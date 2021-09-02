@@ -14,19 +14,15 @@
  * limitations under the License.
  */
 
-#include <folly/io/IOBuf.h>
-
 #include <folly/Benchmark.h>
 #include <folly/Format.h>
 #include <folly/Range.h>
 #include <folly/io/Cursor.h>
+#include <folly/io/IOBuf.h>
 
 DECLARE_bool(benchmark);
 
-using folly::ByteRange;
-using folly::format;
 using folly::IOBuf;
-using folly::StringPiece;
 using std::unique_ptr;
 using namespace folly::io;
 

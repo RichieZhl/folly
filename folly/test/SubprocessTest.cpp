@@ -17,6 +17,7 @@
 #include <folly/Subprocess.h>
 
 #include <sys/types.h>
+
 #include <chrono>
 
 #include <boost/container/flat_set.hpp>
@@ -188,6 +189,15 @@ TEST(SimpleSubprocessTest, waitOrTerminateOrKill_terminates_if_timeout) {
   EXPECT_EQ(SIGTERM, retCode.killSignal());
 }
 
+TEST(
+    SimpleSubprocessTest,
+    destructor_doesNotFail_ifOkToDestroyWhileProcessRunning) {
+  Subprocess proc(
+      std::vector<std::string>{"/bin/sleep", "10"},
+      Subprocess::Options().allowDestructionWhileProcessRunning(true));
+  proc.~Subprocess();
+}
+
 // This method verifies terminateOrKill shouldn't affect the exit
 // status if the process has exitted already.
 TEST(SimpleSubprocessTest, TerminateAfterProcessExit) {
@@ -336,6 +346,46 @@ TEST(SimpleSubprocessTest, DetachExecFails) {
       "failed to execute /no/such/file:",
       Subprocess::Options().detach(),
       "/no/such/file");
+}
+
+TEST(SimpleSubprocessTest, Affinity) {
+#ifdef __linux__
+  cpu_set_t cpuSet0;
+  CPU_ZERO(&cpuSet0);
+  CPU_SET(1, &cpuSet0);
+  CPU_SET(2, &cpuSet0);
+  CPU_SET(3, &cpuSet0);
+  Subprocess::Options options;
+  Subprocess proc(
+      std::vector<std::string>{"/bin/sleep", "5"}, options.setCpuSet(cpuSet0));
+  EXPECT_NE(proc.pid(), -1);
+  cpu_set_t cpuSet1;
+  CPU_ZERO(&cpuSet1);
+  auto ret = ::sched_getaffinity(proc.pid(), sizeof(cpu_set_t), &cpuSet1);
+  CHECK_EQ(ret, 0);
+  CHECK_EQ(::memcmp(&cpuSet0, &cpuSet1, sizeof(cpu_set_t)), 0);
+  auto retCode = proc.waitOrTerminateOrKill(1s, 1s);
+  EXPECT_TRUE(retCode.killed());
+#endif // __linux__
+}
+
+TEST(SimpleSubprocessTest, FromExistingProcess) {
+  // Manually fork a child process using fork() without exec(), and test waiting
+  // for it using the Subprocess API in the parent process.
+  static int constexpr kReturnCode = 123;
+
+  auto pid = fork();
+  ASSERT_NE(pid, -1) << "fork failed";
+  if (pid == 0) {
+    // child process
+    _exit(kReturnCode);
+  }
+
+  auto child = Subprocess::fromExistingProcess(pid);
+  EXPECT_TRUE(child.returnCode().running());
+  auto retCode = child.wait();
+  EXPECT_TRUE(retCode.exited());
+  EXPECT_EQ(kReturnCode, retCode.exitStatus());
 }
 
 TEST(ParentDeathSubprocessTest, ParentDeathSignal) {

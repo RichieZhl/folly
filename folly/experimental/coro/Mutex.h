@@ -17,11 +17,13 @@
 #pragma once
 
 #include <folly/Executor.h>
+#include <folly/experimental/coro/Coroutine.h>
 #include <folly/experimental/coro/ViaIfAsync.h>
 
 #include <atomic>
-#include <experimental/coroutine>
 #include <mutex>
+
+#if FOLLY_HAS_COROUTINES
 
 namespace folly {
 namespace coro {
@@ -159,12 +161,9 @@ class Mutex {
    public:
     explicit LockAwaiter(Mutex& mutex) noexcept : mutex_(mutex) {}
 
-    bool await_ready() noexcept {
-      return mutex_.try_lock();
-    }
+    bool await_ready() noexcept { return mutex_.try_lock(); }
 
-    bool await_suspend(
-        std::experimental::coroutine_handle<> awaitingCoroutine) noexcept {
+    bool await_suspend(coroutine_handle<> awaitingCoroutine) noexcept {
       awaitingCoroutine_ = awaitingCoroutine;
       return mutex_.lockAsyncImpl(this);
     }
@@ -177,7 +176,7 @@ class Mutex {
    private:
     friend Mutex;
 
-    std::experimental::coroutine_handle<> awaitingCoroutine_;
+    coroutine_handle<> awaitingCoroutine_;
     LockAwaiter* next_;
   };
 
@@ -204,9 +203,7 @@ class Mutex {
   };
 
   // Special value for state_ that indicates the mutex is not locked.
-  void* unlockedState() noexcept {
-    return this;
-  }
+  void* unlockedState() noexcept { return this; }
 
   // Try to lock the mutex.
   //
@@ -240,3 +237,5 @@ inline Mutex::LockOperation<Mutex::LockAwaiter> Mutex::co_lock() noexcept {
 
 } // namespace coro
 } // namespace folly
+
+#endif // FOLLY_HAS_COROUTINES

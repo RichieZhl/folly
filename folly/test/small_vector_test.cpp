@@ -15,7 +15,6 @@
  */
 
 #include <folly/small_vector.h>
-#include <folly/sorted_vector_types.h>
 
 #include <iostream>
 #include <iterator>
@@ -27,10 +26,12 @@
 #include <vector>
 
 #include <boost/algorithm/string.hpp>
+#include <fmt/format.h>
 
 #include <folly/Conv.h>
 #include <folly/Traits.h>
 #include <folly/portability/GTest.h>
+#include <folly/sorted_vector_types.h>
 
 using folly::small_vector;
 using namespace folly::small_vector_policy;
@@ -125,13 +126,9 @@ struct NontrivialType {
   static int ctored;
   explicit NontrivialType() : a(0) {}
 
-  /* implicit */ NontrivialType(int a_) : a(a_) {
-    ++ctored;
-  }
+  /* implicit */ NontrivialType(int a_) : a(a_) { ++ctored; }
 
-  NontrivialType(NontrivialType const& /* s */) {
-    ++ctored;
-  }
+  NontrivialType(NontrivialType const& /* s */) { ++ctored; }
 
   NontrivialType& operator=(NontrivialType const& o) {
     a = o.a;
@@ -192,20 +189,12 @@ int Thrower::alive = 0;
 // construction.
 struct NoncopyableCounter {
   static int alive;
-  NoncopyableCounter() {
-    ++alive;
-  }
-  ~NoncopyableCounter() {
-    --alive;
-  }
-  NoncopyableCounter(NoncopyableCounter&&) noexcept {
-    ++alive;
-  }
+  NoncopyableCounter() { ++alive; }
+  ~NoncopyableCounter() { --alive; }
+  NoncopyableCounter(NoncopyableCounter&&) noexcept { ++alive; }
   NoncopyableCounter(NoncopyableCounter const&) = delete;
   NoncopyableCounter& operator=(NoncopyableCounter const&) const = delete;
-  NoncopyableCounter& operator=(NoncopyableCounter&&) {
-    return *this;
-  }
+  NoncopyableCounter& operator=(NoncopyableCounter&&) { return *this; }
 };
 int NoncopyableCounter::alive = 0;
 
@@ -228,9 +217,7 @@ struct TestBasicGuarantee {
     }
   }
 
-  ~TestBasicGuarantee() {
-    throwCounter = 1000;
-  }
+  ~TestBasicGuarantee() { throwCounter = 1000; }
 
   template <class Operation>
   void operator()(int insertCount, Operation const& op) {
@@ -374,6 +361,16 @@ TEST(small_vector, InsertNontrivial) {
   EXPECT_EQ(v3[1].s, "wat");
   EXPECT_EQ(v3[10].s, "wat");
   EXPECT_EQ(v3[11].s, "asd");
+}
+
+TEST(small_vecctor, InsertFromBidirectionalList) {
+  folly::small_vector<std::string> v(6, "asd");
+  std::list<std::string> l(6, "wat");
+  v.insert(v.end(), l.begin(), l.end());
+  EXPECT_EQ(v[0], "asd");
+  EXPECT_EQ(v[5], "asd");
+  EXPECT_EQ(v[6], "wat");
+  EXPECT_EQ(v[11], "wat");
 }
 
 TEST(small_vector, Swap) {
@@ -622,7 +619,7 @@ TEST(small_vector, NoHeap) {
 
   // Check max_size works right with various policy combinations.
   folly::small_vector<std::string, 32, uint32_t> v4;
-  EXPECT_EQ(v4.max_size(), (1ul << 31) - 1);
+  EXPECT_EQ(v4.max_size(), (1ul << 30) - 1);
 
   /*
    * Test that even when we ask for a small number inlined it'll still
@@ -645,9 +642,9 @@ TEST(small_vector, NoHeap) {
 
 TEST(small_vector, MaxSize) {
   folly::small_vector<int, 2, uint8_t> vec;
-  EXPECT_EQ(vec.max_size(), 127);
+  EXPECT_EQ(vec.max_size(), 63);
   folly::small_vector<int, 2, uint16_t> vec2;
-  EXPECT_EQ(vec2.max_size(), (1 << 15) - 1);
+  EXPECT_EQ(vec2.max_size(), (1 << 14) - 1);
 }
 
 TEST(small_vector, AllHeap) {
@@ -656,9 +653,7 @@ TEST(small_vector, AllHeap) {
     double a, b, c, d, e;
     int val;
     SomeObj(int val_) : val(val_) {}
-    bool operator==(SomeObj const& o) const {
-      return o.val == val;
-    }
+    bool operator==(SomeObj const& o) const { return o.val == val; }
   };
 
   folly::small_vector<SomeObj, 0> vec = {1};
@@ -927,15 +922,15 @@ TEST(small_vector, InputIterator) {
   std::istringstream is1(values);
   std::istringstream is2(values);
 
-  std::vector<int> stdV{std::istream_iterator<int>(is1),
-                        std::istream_iterator<int>()};
+  std::vector<int> stdV{
+      std::istream_iterator<int>(is1), std::istream_iterator<int>()};
   ASSERT_EQ(stdV.size(), expected.size());
   for (size_t i = 0; i < expected.size(); i++) {
     ASSERT_EQ(stdV[i], expected[i]);
   }
 
-  small_vector<int> smallV{std::istream_iterator<int>(is2),
-                           std::istream_iterator<int>()};
+  small_vector<int> smallV{
+      std::istream_iterator<int>(is2), std::istream_iterator<int>()};
   ASSERT_EQ(smallV.size(), expected.size());
   for (size_t i = 0; i < expected.size(); i++) {
     ASSERT_EQ(smallV[i], expected[i]);
@@ -1164,6 +1159,20 @@ TEST(small_vector, SelfCopyAssignmentForVectorOfPair) {
   EXPECT_EQ(test[0].first, 13);
 }
 
+namespace {
+struct NonAssignableType {
+  int const i_{};
+};
+} // namespace
+
+TEST(small_vector, PopBackNonAssignableType) {
+  small_vector<NonAssignableType> v;
+  v.emplace_back();
+  EXPECT_EQ(1, v.size());
+  v.pop_back();
+  EXPECT_EQ(0, v.size());
+}
+
 TEST(small_vector, erase) {
   small_vector<int> v(3);
   std::iota(v.begin(), v.end(), 1);
@@ -1182,4 +1191,122 @@ TEST(small_vector, erase_if) {
   EXPECT_EQ(1u, v[0]);
   EXPECT_EQ(3u, v[1]);
   EXPECT_EQ(5u, v[2]);
+}
+
+namespace {
+
+class NonTrivialInt {
+ public:
+  NonTrivialInt() {}
+  /* implicit */ NonTrivialInt(int value)
+      : value_(std::make_shared<int>(value)) {}
+
+  operator int() const { return *value_; }
+
+ private:
+  std::shared_ptr<const int> value_;
+};
+
+// Move and copy constructor and assignment have several special cases depending
+// on relative sizes, so test all combinations.
+template <class T, size_t N>
+void testMoveAndCopy() {
+  const auto fill = [](auto& v, size_t n) {
+    v.resize(n);
+    std::iota(v.begin(), v.end(), 0);
+  };
+  const auto verify = [](const auto& v, size_t n) {
+    ASSERT_EQ(v.size(), n);
+    for (size_t i = 0; i < n; ++i) {
+      EXPECT_EQ(v[i], i);
+    }
+  };
+
+  using Vec = small_vector<T, N>;
+  SCOPED_TRACE(fmt::format("N = {}", N));
+
+  const size_t kMinCapacity = Vec{}.capacity();
+
+  for (size_t from = 0; from < 16; ++from) {
+    SCOPED_TRACE(fmt::format("from = {}", from));
+
+    {
+      SCOPED_TRACE("Move-construction");
+      Vec a;
+      fill(a, from);
+      const auto aCapacity = a.capacity();
+      Vec b = std::move(a);
+      verify(b, from);
+      EXPECT_EQ(b.capacity(), aCapacity);
+      verify(a, 0);
+      EXPECT_EQ(a.capacity(), kMinCapacity);
+    }
+    {
+      SCOPED_TRACE("Copy-construction");
+      Vec a;
+      fill(a, from);
+      Vec b = a;
+      verify(b, from);
+      verify(a, from);
+    }
+
+    for (size_t to = 0; to < 16; ++to) {
+      SCOPED_TRACE(fmt::format("to = {}", to));
+      {
+        SCOPED_TRACE("Move-assignment");
+        Vec a;
+        fill(a, from);
+        Vec b;
+        fill(b, to);
+
+        const auto aCapacity = a.capacity();
+        b = std::move(a);
+        verify(b, from);
+        EXPECT_EQ(b.capacity(), aCapacity);
+        verify(a, 0);
+        EXPECT_EQ(a.capacity(), kMinCapacity);
+      }
+      {
+        SCOPED_TRACE("Copy-assignment");
+        Vec a;
+        fill(a, from);
+        Vec b;
+        fill(b, to);
+
+        b = a;
+        verify(b, from);
+        verify(a, from);
+      }
+      {
+        SCOPED_TRACE("swap");
+        Vec a;
+        fill(a, from);
+        Vec b;
+        fill(b, to);
+
+        const auto aCapacity = a.capacity();
+        const auto bCapacity = b.capacity();
+        swap(a, b);
+        verify(b, from);
+        EXPECT_EQ(b.capacity(), aCapacity);
+        verify(a, to);
+        EXPECT_EQ(a.capacity(), bCapacity);
+      }
+    }
+  }
+}
+
+} // namespace
+
+TEST(small_vector, MoveAndCopyTrivial) {
+  testMoveAndCopy<int, 0>();
+  // Capacity does not fit inline.
+  testMoveAndCopy<int, 2>();
+  // Capacity does fits inline.
+  testMoveAndCopy<int, 4>();
+}
+
+TEST(small_vector, MoveAndCopyNonTrivial) {
+  testMoveAndCopy<NonTrivialInt, 0>();
+  testMoveAndCopy<NonTrivialInt, 4>();
 }

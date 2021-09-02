@@ -38,25 +38,41 @@ class AsyncioExecutor : public DrivableExecutor, public SequencedExecutor {
 
   ~AsyncioExecutor() override {
     keepAliveRelease();
-    if (!FOLLY_DETAIL_PY_ISFINALIZING()) {
-      // if Python is finalizing calling drive() WILL segfault.
-      // any code that could have been called is now inconsequential.
-      while (keepAliveCounter_ > 0) {
-        drive();
-      }
+    while (keepAliveCounter_ > 0) {
+      drive();
     }
   }
 
-  void add(Func func) override {
-    queue_.putMessage(std::move(func));
+  void add(Func func) override { queue_.putMessage(std::move(func)); }
+
+  int fileno() const { return consumer_.getFd(); }
+
+  void drive() noexcept override { driveImpl(/* canDiscard = */ true); }
+
+  void driveNoDiscard() noexcept { driveImpl(/* canDiscard = */ false); }
+
+ protected:
+  bool keepAliveAcquire() noexcept override {
+    auto keepAliveCounter =
+        keepAliveCounter_.fetch_add(1, std::memory_order_relaxed);
+    // We should never increment from 0
+    DCHECK(keepAliveCounter > 0);
+    return true;
   }
 
-  int fileno() const {
-    return consumer_.getFd();
+  void keepAliveRelease() noexcept override {
+    auto keepAliveCounter = --keepAliveCounter_;
+    DCHECK(keepAliveCounter >= 0);
   }
 
-  void drive() noexcept override {
-    consumer_.consumeUntilDrained([](Func&& func) {
+ private:
+  void driveImpl(bool canDiscard) noexcept {
+    consumer_.consume([&](Func&& func) {
+      if (canDiscard && FOLLY_DETAIL_PY_ISFINALIZING()) {
+        // if Python is finalizing calling scheduled functions MAY segfault.
+        // any code that could have been called is now inconsequential.
+        return;
+      }
       try {
         func();
       } catch (...) {
@@ -67,21 +83,6 @@ class AsyncioExecutor : public DrivableExecutor, public SequencedExecutor {
     });
   }
 
- protected:
-  bool keepAliveAcquire() override {
-    auto keepAliveCounter =
-        keepAliveCounter_.fetch_add(1, std::memory_order_relaxed);
-    // We should never increment from 0
-    DCHECK(keepAliveCounter > 0);
-    return true;
-  }
-
-  void keepAliveRelease() override {
-    auto keepAliveCounter = --keepAliveCounter_;
-    DCHECK(keepAliveCounter >= 0);
-  }
-
- private:
   folly::NotificationQueue<Func> queue_;
   folly::NotificationQueue<Func>::SimpleConsumer consumer_{queue_};
   std::atomic<size_t> keepAliveCounter_{1};

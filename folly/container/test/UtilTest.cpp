@@ -16,6 +16,8 @@
 
 #include <folly/container/detail/Util.h>
 
+#include <glog/logging.h>
+
 #include <folly/Optional.h>
 #include <folly/Range.h>
 #include <folly/container/test/TrackingTypes.h>
@@ -95,9 +97,7 @@ TEST(Tracked, baseline) {
 // call the function using callWithExtractedKey
 template <typename F>
 void runKeyExtractCases(
-    std::string const& name,
-    F const& func,
-    uint64_t expectedDist = 0) {
+    std::string const& name, F const& func, uint64_t expectedDist = 0) {
   Optional<std::pair<Tracked<0> const, Tracked<1>>> sink;
   auto sinkFunc = [&sink](Tracked<0> const& key, auto&&... args) {
     if (!sink.hasValue() || sink.value().first != key) {
@@ -107,7 +107,7 @@ void runKeyExtractCases(
 
   {
     std::pair<Tracked<0> const, Tracked<1>> p{0, 0};
-    sink.clear();
+    sink.reset();
     resetTracking();
     func(sinkFunc, p);
     // fresh key, value_type const& ->
@@ -116,12 +116,12 @@ void runKeyExtractCases(
         Tracked<0>::counts().dist(Counts{1, 0, 0, 0}) +
             Tracked<1>::counts().dist(Counts{1, 0, 0, 0}),
         expectedDist)
-        << name << "\n0 -> " << Tracked<0>::counts << "\n1 -> "
-        << Tracked<1>::counts;
+        << name << "\n0 -> " << Tracked<0>::counts() << "\n1 -> "
+        << Tracked<1>::counts();
   }
   {
     std::pair<Tracked<0> const, Tracked<1>> p{0, 0};
-    sink.clear();
+    sink.reset();
     resetTracking();
     func(sinkFunc, std::move(p));
     // fresh key, value_type&& ->
@@ -130,12 +130,12 @@ void runKeyExtractCases(
         Tracked<0>::counts().dist(Counts{1, 0, 0, 0}) +
             Tracked<1>::counts().dist(Counts{0, 1, 0, 0}),
         expectedDist)
-        << name << "\n0 -> " << Tracked<0>::counts << "\n1 -> "
-        << Tracked<1>::counts;
+        << name << "\n0 -> " << Tracked<0>::counts() << "\n1 -> "
+        << Tracked<1>::counts();
   }
   {
     std::pair<Tracked<0>, Tracked<1>> p{0, 0};
-    sink.clear();
+    sink.reset();
     resetTracking();
     func(sinkFunc, p);
     // fresh key, pair<key_type,mapped_type> const& ->
@@ -144,12 +144,12 @@ void runKeyExtractCases(
         Tracked<0>::counts().dist(Counts{1, 0, 0, 0}) +
             Tracked<1>::counts().dist(Counts{1, 0, 0, 0}),
         expectedDist)
-        << name << "\n0 -> " << Tracked<0>::counts << "\n1 -> "
-        << Tracked<1>::counts;
+        << name << "\n0 -> " << Tracked<0>::counts() << "\n1 -> "
+        << Tracked<1>::counts();
   }
   {
     std::pair<Tracked<0>, Tracked<1>> p{0, 0};
-    sink.clear();
+    sink.reset();
     resetTracking();
     func(sinkFunc, std::move(p));
     // fresh key, pair<key_type,mapped_type>&& ->
@@ -158,19 +158,19 @@ void runKeyExtractCases(
         Tracked<0>::counts().dist(Counts{0, 1, 0, 0}) +
             Tracked<1>::counts().dist(Counts{0, 1, 0, 0}),
         expectedDist)
-        << name << "\n0 -> " << Tracked<0>::counts << "\n1 -> "
-        << Tracked<1>::counts;
+        << name << "\n0 -> " << Tracked<0>::counts() << "\n1 -> "
+        << Tracked<1>::counts();
   }
   {
     std::pair<Tracked<2>, Tracked<3>> p{0, 0};
-    sink.clear();
+    sink.reset();
     resetTracking();
     func(sinkFunc, p);
     // fresh key, convertible const& ->
     //   key_type ops: Tracked<0>::counts
     //   mapped_type ops: Tracked<1>::counts
     //   key_src ops: Tracked<2>::counts
-    //   mapped_src ops: Tracked<3>::counts;
+    //   mapped_src ops: Tracked<3>::counts();
 
     // There are three strategies that could be optimal for particular
     // ratios of cost:
@@ -198,14 +198,14 @@ void runKeyExtractCases(
   }
   {
     std::pair<Tracked<2>, Tracked<3>> p{0, 0};
-    sink.clear();
+    sink.reset();
     resetTracking();
     func(sinkFunc, std::move(p));
     // fresh key, convertible&& ->
     //   key_type ops: Tracked<0>::counts
     //   mapped_type ops: Tracked<1>::counts
     //   key_src ops: Tracked<2>::counts
-    //   mapped_src ops: Tracked<3>::counts;
+    //   mapped_src ops: Tracked<3>::counts();
     EXPECT_EQ(
         Tracked<0>::counts().dist(Counts{0, 1, 0, 1}) +
             Tracked<1>::counts().dist(Counts{0, 0, 0, 1}) +
@@ -215,7 +215,7 @@ void runKeyExtractCases(
   }
   {
     std::pair<Tracked<0> const, Tracked<1>> p{0, 0};
-    sink.clear();
+    sink.reset();
     sink.emplace(0, 0);
     resetTracking();
     func(sinkFunc, p);
@@ -227,7 +227,7 @@ void runKeyExtractCases(
   }
   {
     std::pair<Tracked<0> const, Tracked<1>> p{0, 0};
-    sink.clear();
+    sink.reset();
     sink.emplace(0, 0);
     resetTracking();
     func(sinkFunc, std::move(p));
@@ -239,7 +239,7 @@ void runKeyExtractCases(
   }
   {
     std::pair<Tracked<0>, Tracked<1>> p{0, 0};
-    sink.clear();
+    sink.reset();
     sink.emplace(0, 0);
     resetTracking();
     func(sinkFunc, p);
@@ -251,7 +251,7 @@ void runKeyExtractCases(
   }
   {
     std::pair<Tracked<0>, Tracked<1>> p{0, 0};
-    sink.clear();
+    sink.reset();
     sink.emplace(0, 0);
     resetTracking();
     func(sinkFunc, std::move(p));
@@ -263,7 +263,7 @@ void runKeyExtractCases(
   }
   {
     std::pair<Tracked<2>, Tracked<3>> p{0, 0};
-    sink.clear();
+    sink.reset();
     sink.emplace(0, 0);
     resetTracking();
     func(sinkFunc, p);
@@ -271,7 +271,7 @@ void runKeyExtractCases(
     //   key_type ops: Tracked<0>::counts
     //   mapped_type ops: Tracked<1>::counts
     //   key_src ops: Tracked<2>::counts
-    //   mapped_src ops: Tracked<3>::counts;
+    //   mapped_src ops: Tracked<3>::counts();
     EXPECT_EQ(
         Tracked<0>::counts().dist(Counts{0, 0, 1, 0}) +
             Tracked<1>::counts().dist(Counts{0, 0, 0, 0}) +
@@ -281,7 +281,7 @@ void runKeyExtractCases(
   }
   {
     std::pair<Tracked<2>, Tracked<3>> p{0, 0};
-    sink.clear();
+    sink.reset();
     sink.emplace(0, 0);
     resetTracking();
     func(sinkFunc, std::move(p));
@@ -289,7 +289,7 @@ void runKeyExtractCases(
     //   key_type ops: Tracked<0>::counts
     //   mapped_type ops: Tracked<1>::counts
     //   key_src ops: Tracked<2>::counts
-    //   mapped_src ops: Tracked<3>::counts;
+    //   mapped_src ops: Tracked<3>::counts();
     EXPECT_EQ(
         Tracked<0>::counts().dist(Counts{0, 0, 0, 1}) +
             Tracked<1>::counts().dist(Counts{0, 0, 0, 0}) +
@@ -299,14 +299,11 @@ void runKeyExtractCases(
   }
 }
 
-template <typename T>
-using FalseFunc1 = std::false_type;
-
 struct DoEmplace1 {
   template <typename F, typename P>
   void operator()(F&& f, P&& p) const {
     std::allocator<char> a;
-    detail::callWithExtractedKey<Tracked<0>, FalseFunc1>(
+    detail::callWithExtractedKey<Tracked<0>, Tracked<1>>(
         a, std::forward<F>(f), std::forward<P>(p));
   }
 };
@@ -315,14 +312,14 @@ struct DoEmplace2 {
   template <typename F, typename U1, typename U2>
   void operator()(F&& f, std::pair<U1, U2> const& p) const {
     std::allocator<char> a;
-    detail::callWithExtractedKey<Tracked<0>, FalseFunc1>(
+    detail::callWithExtractedKey<Tracked<0>, Tracked<1>>(
         a, std::forward<F>(f), p.first, p.second);
   }
 
   template <typename F, typename U1, typename U2>
   void operator()(F&& f, std::pair<U1, U2>&& p) const {
     std::allocator<char> a;
-    detail::callWithExtractedKey<Tracked<0>, FalseFunc1>(
+    detail::callWithExtractedKey<Tracked<0>, Tracked<1>>(
         a, std::forward<F>(f), std::move(p.first), std::move(p.second));
   }
 };
@@ -331,7 +328,7 @@ struct DoEmplace3 {
   template <typename F, typename U1, typename U2>
   void operator()(F&& f, std::pair<U1, U2> const& p) const {
     std::allocator<char> a;
-    detail::callWithExtractedKey<Tracked<0>, FalseFunc1>(
+    detail::callWithExtractedKey<Tracked<0>, Tracked<1>>(
         a,
         std::forward<F>(f),
         std::piecewise_construct,
@@ -342,7 +339,7 @@ struct DoEmplace3 {
   template <typename F, typename U1, typename U2>
   void operator()(F&& f, std::pair<U1, U2>&& p) const {
     std::allocator<char> a;
-    detail::callWithExtractedKey<Tracked<0>, FalseFunc1>(
+    detail::callWithExtractedKey<Tracked<0>, Tracked<1>>(
         a,
         std::forward<F>(f),
         std::piecewise_construct,
@@ -359,7 +356,7 @@ struct DoEmplace3Value {
   template <typename F, typename U1, typename U2>
   void operator()(F&& f, std::pair<U1, U2> const& p) const {
     std::allocator<char> a;
-    detail::callWithExtractedKey<Tracked<0>, FalseFunc1>(
+    detail::callWithExtractedKey<Tracked<0>, Tracked<1>>(
         a,
         std::forward<F>(f),
         std::piecewise_construct,
@@ -370,7 +367,7 @@ struct DoEmplace3Value {
   template <typename F, typename U1, typename U2>
   void operator()(F&& f, std::pair<U1, U2>&& p) const {
     std::allocator<char> a;
-    detail::callWithExtractedKey<Tracked<0>, FalseFunc1>(
+    detail::callWithExtractedKey<Tracked<0>, Tracked<1>>(
         a,
         std::forward<F>(f),
         std::piecewise_construct,
@@ -388,7 +385,7 @@ TEST(Util, callWithExtractedKey) {
   // Calling the default pair constructor via emplace is valid, but not
   // very useful in real life.  Verify that it works.
   std::allocator<char> a;
-  detail::callWithExtractedKey<Tracked<0>, FalseFunc1>(
+  detail::callWithExtractedKey<Tracked<0>, Tracked<1>>(
       a, [](Tracked<0> const& key, auto&&... args) {
         EXPECT_TRUE(key == 0);
         std::pair<Tracked<0> const, Tracked<1>> p(
@@ -413,25 +410,25 @@ TEST(Util, callWithConstructedKey) {
     Tracked<0> k1{0};
     Tracked<0> k2{0};
     uint64_t k3 = 0;
-    sink.clear();
+    sink.reset();
     resetTracking();
-    detail::callWithConstructedKey<Tracked<0>, FalseFunc1>(a, sinkFunc, k1);
+    detail::callWithConstructedKey<Tracked<0>>(a, sinkFunc, k1);
     // copy is expected on successful emplace
     EXPECT_EQ(Tracked<0>::counts().dist(Counts{1, 0, 0, 0}), 0);
 
     resetTracking();
-    detail::callWithConstructedKey<Tracked<0>, FalseFunc1>(a, sinkFunc, k2);
+    detail::callWithConstructedKey<Tracked<0>>(a, sinkFunc, k2);
     // no copies or moves on failing emplace with value_type
     EXPECT_EQ(Tracked<0>::counts().dist(Counts{0, 0, 0, 0}), 0);
 
     resetTracking();
-    detail::callWithConstructedKey<Tracked<0>, FalseFunc1>(a, sinkFunc, k3);
+    detail::callWithConstructedKey<Tracked<0>>(a, sinkFunc, k3);
     // copy convert expected for failing emplace with wrong type
     EXPECT_EQ(Tracked<0>::counts().dist(Counts{0, 0, 1, 0}), 0);
 
-    sink.clear();
+    sink.reset();
     resetTracking();
-    detail::callWithConstructedKey<Tracked<0>, FalseFunc1>(a, sinkFunc, k3);
+    detail::callWithConstructedKey<Tracked<0>>(a, sinkFunc, k3);
     // copy convert + move expected for successful emplace with wrong type
     EXPECT_EQ(Tracked<0>::counts().dist(Counts{0, 1, 1, 0}), 0);
   }
@@ -439,38 +436,34 @@ TEST(Util, callWithConstructedKey) {
     Tracked<0> k1{0};
     Tracked<0> k2{0};
     uint64_t k3 = 0;
-    sink.clear();
+    sink.reset();
     resetTracking();
-    detail::callWithConstructedKey<Tracked<0>, FalseFunc1>(
-        a, sinkFunc, std::move(k1));
+    detail::callWithConstructedKey<Tracked<0>>(a, sinkFunc, std::move(k1));
     // move is expected on successful emplace
     EXPECT_EQ(Tracked<0>::counts().dist(Counts{0, 1, 0, 0}), 0);
 
     resetTracking();
-    detail::callWithConstructedKey<Tracked<0>, FalseFunc1>(
-        a, sinkFunc, std::move(k2));
+    detail::callWithConstructedKey<Tracked<0>>(a, sinkFunc, std::move(k2));
     // no copies or moves on failing emplace with value_type
     EXPECT_EQ(Tracked<0>::counts().dist(Counts{0, 0, 0, 0}), 0);
 
     resetTracking();
-    detail::callWithConstructedKey<Tracked<0>, FalseFunc1>(
-        a, sinkFunc, std::move(k3));
+    detail::callWithConstructedKey<Tracked<0>>(a, sinkFunc, std::move(k3));
     // move convert expected for failing emplace with wrong type
     EXPECT_EQ(Tracked<0>::counts().dist(Counts{0, 0, 0, 1}), 0);
 
-    sink.clear();
+    sink.reset();
     resetTracking();
-    detail::callWithConstructedKey<Tracked<0>, FalseFunc1>(
-        a, sinkFunc, std::move(k3));
+    detail::callWithConstructedKey<Tracked<0>>(a, sinkFunc, std::move(k3));
     // move convert + move expected for successful emplace with wrong type
     EXPECT_EQ(Tracked<0>::counts().dist(Counts{0, 1, 0, 1}), 0);
   }
 
   // Calling the default pair constructor via emplace is valid, but not
   // very useful in real life.  Verify that it works.
-  sink.clear();
-  detail::callWithConstructedKey<Tracked<0>, FalseFunc1>(a, sinkFunc);
-  EXPECT_TRUE(sink.hasValue());
+  sink.reset();
+  detail::callWithConstructedKey<Tracked<0>>(a, sinkFunc);
+  EXPECT_TRUE(sink.has_value());
 }
 
 // We're deliberately allowing only a subset of the desired heterogeneous
@@ -479,66 +472,87 @@ TEST(Util, callWithConstructedKey) {
 template <typename T>
 using IsStringPiece = std::is_same<T, StringPiece>;
 
+template <typename KeyType, typename Arg1, typename Arg2>
+struct ExpectArgTypes {
+  int which{0};
+  KeyType const* expectedAddr{nullptr};
+
+  template <typename K, typename... Args>
+  void operator()(K const&, Args&&... args) {
+    // avoid static_assert to ensure we don't affect SFINAE
+    EXPECT_TRUE((std::is_same<K, KeyType>::value)) << which;
+    using T = std::tuple<Args&&...>;
+    EXPECT_EQ(std::tuple_size<T>::value, 2) << which;
+    EXPECT_TRUE((std::is_same<std::tuple_element_t<0, T>, Arg1>::value))
+        << which;
+    EXPECT_TRUE((std::is_same<std::tuple_element_t<1, T>, Arg2>::value))
+        << which;
+
+    auto t = std::forward_as_tuple(std::forward<Args>(args)...);
+    EXPECT_TRUE(expectedAddr == nullptr || expectedAddr == &std::get<0>(t))
+        << which;
+  }
+};
+
 TEST(Util, callWithExtractedHeterogeneousKey) {
   std::allocator<char> a;
   std::string str{"key"};
   StringPiece sp{"key"};
   char const* ptr{"key"};
-  detail::callWithExtractedKey<std::string, IsStringPiece>(
+  auto strPair = std::make_pair(str, 0);
+  std::pair<std::string&, int> strLRefPair(str, 0);
+  std::pair<std::string&&, int> strRRefPair(std::move(str), 0);
+  auto spPair = std::make_pair(sp, 0);
+  auto ptrPair = std::make_pair(ptr, 0);
+
+  // none of the std::move below actually get consumed
+
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
+      a, ExpectArgTypes<std::string, std::string&, int&&>{0, &str}, str, 0);
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
       a,
-      [](auto const& key, auto&&... args) {
-        // avoid static_assert to ensure we don't affect SFINAE
-        EXPECT_TRUE((std::is_same<decltype(key), std::string const&>::value));
-        using T = std::tuple<decltype(args)&&...>;
-        EXPECT_EQ(std::tuple_size<T>::value, 3);
-        EXPECT_TRUE((std::is_same<
-                     std::tuple_element_t<1, T>,
-                     std::tuple<std::string&>&&>::value));
-        EXPECT_TRUE(
-            (std::is_same<std::tuple_element_t<2, T>, std::tuple<int&&>&&>::
-                 value));
-      },
-      str,
-      0);
-  detail::callWithExtractedKey<std::string, IsStringPiece>(
+      ExpectArgTypes<std::string, std::string const&, int const&>{
+          1, &strPair.first},
+      strPair);
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
       a,
-      [](auto const& key, auto&&... args) {
-        EXPECT_TRUE((std::is_same<decltype(key), std::string const&>::value));
-        using T = std::tuple<decltype(args)&&...>;
-        EXPECT_EQ(std::tuple_size<T>::value, 3);
-        EXPECT_TRUE((std::is_same<
-                     std::tuple_element_t<1, T>,
-                     std::tuple<std::string&&>&&>::value));
-      },
+      ExpectArgTypes<std::string, std::string&, int&&>{2, &str},
+      std::move(strLRefPair));
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
+      a,
+      ExpectArgTypes<std::string, std::string&, int const&>{10, &str},
+      strLRefPair);
+
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
+      a,
+      ExpectArgTypes<std::string, std::string&&, int&&>{3, &str},
       std::move(str),
       0);
-  detail::callWithExtractedKey<std::string, IsStringPiece>(
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
       a,
-      [](auto const& key, auto&&... args) {
-        EXPECT_TRUE((std::is_same<decltype(key), StringPiece const&>::value));
-        using T = std::tuple<decltype(args)&&...>;
-        EXPECT_EQ(std::tuple_size<T>::value, 3);
-        EXPECT_TRUE((std::is_same<
-                     std::tuple_element_t<1, T>,
-                     std::tuple<StringPiece&>&&>::value));
-      },
-      sp,
-      0);
-  detail::callWithExtractedKey<std::string, IsStringPiece>(
+      ExpectArgTypes<std::string, std::string&&, int&&>{4, &strPair.first},
+      std::move(strPair));
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
       a,
-      [](auto const& key, auto&&... args) {
-        // avoid static_assert to ensure we don't affect SFINAE
-        EXPECT_TRUE((std::is_same<decltype(key), std::string const&>::value));
-        using T = std::tuple<decltype(args)&&...>;
-        EXPECT_EQ(std::tuple_size<T>::value, 3);
-        EXPECT_TRUE((std::is_same<
-                     std::tuple_element_t<1, T>,
-                     std::tuple<std::string&&>&&>::value));
-        auto t = std::forward_as_tuple(std::forward<decltype(args)>(args)...);
-        EXPECT_EQ(&key, &std::get<0>(std::get<1>(t)));
-      },
-      ptr,
-      0);
+      ExpectArgTypes<std::string, std::string&, int const&>{5, &str},
+      strRRefPair);
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
+      a,
+      ExpectArgTypes<std::string, std::string&&, int&&>{11, &str},
+      std::move(strRRefPair));
+
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
+      a, ExpectArgTypes<StringPiece, StringPiece&, int&&>{6, &sp}, sp, 0);
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
+      a,
+      ExpectArgTypes<StringPiece, StringPiece const&, int const&>{
+          7, &spPair.first},
+      spPair);
+
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
+      a, ExpectArgTypes<std::string, std::string&&, int&&>{8}, ptr, 0);
+  detail::callWithExtractedKey<std::string, int, IsStringPiece>(
+      a, ExpectArgTypes<std::string, std::string&&, int const&>{9}, ptrPair);
 }
 
 TEST(Util, callWithConstructedHeterogeneousKey) {

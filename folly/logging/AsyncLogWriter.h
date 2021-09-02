@@ -136,8 +136,7 @@ class AsyncLogWriter : public LogWriter {
    * messages. This method will be called in a separate IO thread.
    */
   virtual void performIO(
-      std::vector<std::string>* logs,
-      size_t numDiscarded) = 0;
+      const std::vector<std::string>& logs, size_t numDiscarded) = 0;
 
   void ioThread();
 

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <atomic>
+#include <cstdint>
 #include <thread>
 
 #include <folly/Memory.h>
@@ -22,6 +24,8 @@
 #include <folly/io/async/test/RequestContextHelper.h>
 #include <folly/portability/GTest.h>
 #include <folly/system/ThreadName.h>
+
+#include <boost/thread/barrier.hpp>
 
 using namespace folly;
 
@@ -88,6 +92,8 @@ TEST_F(RequestContextTest, SimpleTest) {
 
   // There should always be a default context with get()
   EXPECT_TRUE(RequestContext::get() != nullptr);
+  // but fallback context should have rootid set to 0
+  EXPECT_EQ(RequestContext::get()->getRootId(), 0);
 
   // but not with saveContext()
   EXPECT_EQ(RequestContext::saveContext(), nullptr);
@@ -97,6 +103,7 @@ TEST_F(RequestContextTest, SimpleTest) {
   EXPECT_EQ(1, rootids.size());
   EXPECT_EQ(RequestContext::get()->getRootId(), rootids[0]);
   EXPECT_EQ(reinterpret_cast<intptr_t>(RequestContext::get()), rootids[0]);
+  EXPECT_NE(RequestContext::get()->getRootId(), 0);
   RequestContext::create();
   EXPECT_NE(RequestContext::saveContext(), nullptr);
   EXPECT_NE(RequestContext::get()->getRootId(), rootids[0]);
@@ -187,6 +194,7 @@ TEST_F(RequestContextTest, testSetUnset) {
 
   // onSet called in setContextData
   EXPECT_EQ(1, testData1->set_);
+  EXPECT_EQ(ctx1.get(), testData1->onSetRctx);
 
   // Override RequestContext
   RequestContext::create();
@@ -196,14 +204,19 @@ TEST_F(RequestContextTest, testSetUnset) {
 
   // onSet called in setContextData
   EXPECT_EQ(1, testData2->set_);
+  EXPECT_EQ(ctx2.get(), testData2->onSetRctx);
 
   // Check ctx1->onUnset was called
   EXPECT_EQ(1, testData1->unset_);
+  EXPECT_EQ(ctx1.get(), testData1->onUnSetRctx);
 
   RequestContext::setContext(ctx1);
   EXPECT_EQ(2, testData1->set_);
   EXPECT_EQ(1, testData1->unset_);
   EXPECT_EQ(1, testData2->unset_);
+  EXPECT_EQ(ctx1.get(), testData1->onSetRctx);
+  EXPECT_EQ(ctx1.get(), testData1->onUnSetRctx);
+  EXPECT_EQ(ctx2.get(), testData2->onUnSetRctx);
 
   RequestContext::setContext(ctx2);
   EXPECT_EQ(2, testData1->set_);
@@ -222,15 +235,13 @@ TEST_F(RequestContextTest, deadlockTest) {
           val_, std::make_unique<TestData>(1));
     }
 
-    bool hasCallback() override {
-      return false;
-    }
+    bool hasCallback() override { return false; }
 
     std::string val_;
   };
 
   RequestContext::get()->setContextData(
-      "test", std::make_unique<DeadlockTestData>("test2"));
+      "test", std::make_unique<DeadlockTestData>("test1"));
   RequestContext::get()->clearContextData(testtoken);
 }
 
@@ -251,9 +262,7 @@ TEST_F(RequestContextTest, sharedGlobalTest) {
       global = false;
     }
 
-    bool hasCallback() override {
-      return true;
-    }
+    bool hasCallback() override { return true; }
   };
 
   intptr_t root = 0;
@@ -355,16 +364,40 @@ TEST_F(RequestContextTest, ShallowCopyClear) {
   EXPECT_EQ(1, getData().unset_);
 }
 
-TEST_F(RequestContextTest, RootIdOnCopy) {
-  auto ctxBase = std::make_shared<RequestContext>();
-  EXPECT_EQ(reinterpret_cast<intptr_t>(ctxBase.get()), ctxBase->getRootId());
+TEST_F(RequestContextTest, ShallowCopyMulti) {
+  RequestContextScopeGuard g0;
+  setData(1, "test1");
+  setData(2, "test2");
+  EXPECT_EQ(1, getData("test1").data_);
+  EXPECT_EQ(2, getData("test2").data_);
   {
-    auto ctx = RequestContext::copyAsRoot(*ctxBase);
-    EXPECT_EQ(reinterpret_cast<intptr_t>(ctx.get()), ctx->getRootId());
+    ShallowCopyRequestContextScopeGuard g1(
+        RequestDataItem{"test1", std::make_unique<TestData>(2)},
+        RequestDataItem{"test2", std::make_unique<TestData>(4)});
+
+    EXPECT_EQ(2, getData("test1").data_);
+    EXPECT_EQ(4, getData("test2").data_);
+    clearData("test1");
+    clearData("test2");
+    setData(4, "test1");
+    setData(8, "test2");
+    EXPECT_EQ(4, getData("test1").data_);
+    EXPECT_EQ(8, getData("test2").data_);
+  }
+  EXPECT_EQ(1, getData("test1").data_);
+  EXPECT_EQ(2, getData("test2").data_);
+}
+
+TEST_F(RequestContextTest, RootIdOnCopy) {
+  auto ctxBase = std::make_shared<RequestContext>(0xab);
+  EXPECT_EQ(0xab, ctxBase->getRootId());
+  {
+    auto ctx = RequestContext::copyAsRoot(*ctxBase, 0xabc);
+    EXPECT_EQ(0xabc, ctx->getRootId());
   }
   {
     auto ctx = RequestContext::copyAsChild(*ctxBase);
-    EXPECT_EQ(reinterpret_cast<intptr_t>(ctxBase.get()), ctx->getRootId());
+    EXPECT_EQ(0xab, ctx->getRootId());
   }
 }
 
@@ -395,4 +428,141 @@ TEST_F(RequestContextTest, ThreadId) {
 
   EXPECT_EQ(*folly::getThreadName(rootids[0].tid), "DummyThread");
   EXPECT_FALSE(folly::getThreadName(rootids[1].tid));
+}
+
+TEST_F(RequestContextTest, Clear) {
+  struct Foo : public RequestData {
+    bool& cleared;
+    bool& deleted;
+    Foo(bool& c, bool& d) : cleared(c), deleted(d) {}
+    ~Foo() override {
+      EXPECT_TRUE(cleared);
+      deleted = true;
+    }
+    bool hasCallback() override { return false; }
+    void onClear() override {
+      EXPECT_FALSE(cleared);
+      cleared = true;
+    }
+  };
+
+  std::string key = "clear";
+  {
+    bool cleared = false;
+    bool deleted = false;
+    {
+      RequestContextScopeGuard g;
+      RequestContext::get()->setContextData(
+          key, std::make_unique<Foo>(cleared, deleted));
+      EXPECT_FALSE(cleared);
+      RequestContext::get()->clearContextData(key);
+      EXPECT_TRUE(cleared);
+    }
+    EXPECT_TRUE(deleted);
+  }
+  {
+    bool cleared = false;
+    bool deleted = false;
+    {
+      RequestContextScopeGuard g;
+      RequestContext::get()->setContextData(
+          key, std::make_unique<Foo>(cleared, deleted));
+      EXPECT_FALSE(cleared);
+      EXPECT_FALSE(deleted);
+    }
+    EXPECT_TRUE(cleared);
+    EXPECT_TRUE(deleted);
+  }
+}
+
+TEST_F(RequestContextTest, OverwriteNullData) {
+  folly::ShallowCopyRequestContextScopeGuard g0("token", nullptr);
+  {
+    folly::ShallowCopyRequestContextScopeGuard g1(
+        "token", std::make_unique<TestData>(0));
+    EXPECT_NE(folly::RequestContext::get()->getContextData("token"), nullptr);
+  }
+}
+
+TEST_F(RequestContextTest, ConcurrentDataRefRelease) {
+  for (int i = 0; i < 100; ++i) {
+    std::atomic<int> step{0};
+    std::shared_ptr<folly::RequestContext> sp1;
+    auto th1 = std::thread([&]() {
+      folly::RequestContextScopeGuard g0; // Creates ctx0.
+      setData(); // Creates data0 with one reference in ctx0.
+      {
+        folly::ShallowCopyRequestContextScopeGuard g1;
+        // g1 created ctx1 with second reference to data0.
+        EXPECT_NE(&getData(), nullptr);
+        // Keep shared_ptr to ctx1 to pass to th2
+        sp1 = folly::RequestContext::saveContext();
+        step.store(1); // sp1 is ready.
+        while (step.load() < 2)
+          /* Wait for th2 to clear reference to data0. */;
+      }
+      // End of g2 released shared_ptr to ctx1, switched back to ctx0
+      // At this point:
+      // - One shared_ptr to ctx0, held by th1.
+      // - One shared_ptr to ctx1, help by th2.
+      // - data0 has one clear count (for reference from ctx0) and
+      //   two delete counts (one each from ctx0 and ctx1).
+      step.store(3);
+      // End of g1 will destroy ctx0, release clear/delete counts for data0.
+    });
+    auto th2 = std::thread([&]() {
+      while (step.load() < 1)
+        /* Wait for th1 to set sp1. */;
+      folly::RequestContextScopeGuard g2(std::move(sp1));
+      // g2 set context to ctx1.
+      EXPECT_EQ(sp1.get(), nullptr);
+      EXPECT_NE(&getData(), nullptr);
+      clearData();
+      step.store(2); // th2 cleared reference to data0 in ctx1.
+      while (step.load() < 3)
+        /* Wait for th1 to release shared_ptr to ctx1. */;
+      // End of g2 will destroy ctx1, release delete count for data0.
+    });
+    th1.join();
+    th2.join();
+  }
+}
+
+TEST_F(RequestContextTest, AccessAllThreadsDestructionGuard) {
+  constexpr auto kNumThreads = 128;
+
+  std::vector<std::thread> threads{kNumThreads};
+  boost::barrier barrier{kNumThreads + 1};
+
+  std::atomic<std::size_t> count{0};
+  for (auto& thread : threads) {
+    thread = std::thread([&] {
+      // Force creation of thread local
+      RequestContext::get();
+      ++count;
+      // Wait for all other threads to do the same
+      barrier.wait();
+      // Wait until signaled to die
+      barrier.wait();
+    });
+  }
+
+  barrier.wait();
+  // Sanity check
+  EXPECT_EQ(count.load(), kNumThreads);
+
+  {
+    auto accessor = RequestContext::accessAllThreads();
+    // Allow threads to die (but they should not as long as we hold accessor!)
+    barrier.wait();
+    auto accessorsCount = std::distance(accessor.begin(), accessor.end());
+    EXPECT_EQ(accessorsCount, kNumThreads + 1);
+    for (RequestContext::StaticContext& staticContext : accessor) {
+      EXPECT_EQ(staticContext.requestContext, nullptr);
+    }
+  }
+
+  for (auto& thread : threads) {
+    thread.join();
+  }
 }

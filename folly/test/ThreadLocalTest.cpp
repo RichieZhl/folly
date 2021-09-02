@@ -50,10 +50,10 @@ using namespace folly;
 
 struct Widget {
   static int totalVal_;
+  static int totalMade_;
   int val_;
-  ~Widget() {
-    totalVal_ += val_;
-  }
+  Widget() : val_(0) { totalMade_++; }
+  ~Widget() { totalVal_ += val_; }
 
   static void customDeleter(Widget* w, TLPDestructionMode mode) {
     totalVal_ += (mode == TLPDestructionMode::ALL_THREADS) ? 1000 : 1;
@@ -61,6 +61,7 @@ struct Widget {
   }
 };
 int Widget::totalVal_ = 0;
+int Widget::totalMade_ = 0;
 
 struct MultiWidget {
   int val_{0};
@@ -85,8 +86,7 @@ TEST(ThreadLocalPtr, BasicDestructor) {
   std::thread([&w]() {
     w.reset(new Widget());
     w.get()->val_ += 10;
-  })
-      .join();
+  }).join();
   EXPECT_EQ(10, Widget::totalVal_);
 }
 
@@ -97,8 +97,7 @@ TEST(ThreadLocalPtr, CustomDeleter1) {
     std::thread([&w]() {
       w.reset(new Widget(), Widget::customDeleter);
       w.get()->val_ += 10;
-    })
-        .join();
+    }).join();
     EXPECT_EQ(11, Widget::totalVal_);
   }
   EXPECT_EQ(11, Widget::totalVal_);
@@ -115,8 +114,7 @@ TEST(ThreadLocalPtr, CustomDeleterOwnershipTransfer) {
     std::thread([&w, &source]() {
       w.reset(std::move(source));
       w.get()->val_ += 10;
-    })
-        .join();
+    }).join();
     EXPECT_EQ(11, Widget::totalVal_);
   }
   EXPECT_EQ(11, Widget::totalVal_);
@@ -130,8 +128,7 @@ TEST(ThreadLocalPtr, DefaultDeleterOwnershipTransfer) {
     std::thread([&w, &source]() {
       w.reset(std::move(source));
       w.get()->val_ += 10;
-    })
-        .join();
+    }).join();
     EXPECT_EQ(10, Widget::totalVal_);
   }
   EXPECT_EQ(10, Widget::totalVal_);
@@ -156,8 +153,7 @@ TEST(ThreadLocalPtr, TestRelease) {
     w.get()->val_ += 10;
 
     wPtr.reset(w.release());
-  })
-      .join();
+  }).join();
   EXPECT_EQ(0, Widget::totalVal_);
   wPtr.reset();
   EXPECT_EQ(10, Widget::totalVal_);
@@ -176,8 +172,7 @@ TEST(ThreadLocalPtr, CreateOnThreadExit) {
       ThreadLocal<Widget> wl;
       ++wl.get()->val_;
     });
-  })
-      .join();
+  }).join();
   EXPECT_EQ(2, Widget::totalVal_);
 }
 
@@ -240,6 +235,34 @@ TEST(ThreadLocalPtr, CustomDeleter2) {
   t.join();
 
   EXPECT_EQ(1010, Widget::totalVal_);
+}
+
+TEST(ThreadLocal, GetWithoutCreateUncreated) {
+  Widget::totalVal_ = 0;
+  Widget::totalMade_ = 0;
+  ThreadLocal<Widget> w;
+  std::thread([&w]() {
+    auto ptr = w.getIfExist();
+    if (ptr) {
+      ptr->val_++;
+    }
+  }).join();
+  EXPECT_EQ(0, Widget::totalMade_);
+}
+
+TEST(ThreadLocal, GetWithoutCreateGets) {
+  Widget::totalVal_ = 0;
+  Widget::totalMade_ = 0;
+  ThreadLocal<Widget> w;
+  std::thread([&w]() {
+    w->val_++;
+    auto ptr = w.getIfExist();
+    if (ptr) {
+      ptr->val_++;
+    }
+  }).join();
+  EXPECT_EQ(1, Widget::totalMade_);
+  EXPECT_EQ(2, Widget::totalVal_);
 }
 
 TEST(ThreadLocal, BasicDestructor) {
@@ -323,9 +346,7 @@ class SimpleThreadCachedInt {
   ThreadLocal<int, NewTag> val_;
 
  public:
-  void add(int val) {
-    *val_ += val;
-  }
+  void add(int val) { *val_ += val; }
 
   int read() {
     int ret = 0;
@@ -427,9 +448,7 @@ class ThreadCachedIntWidget {
     }
   }
 
-  void set(detail::ThreadCachedInts<void>* ints) {
-    ints_ = ints;
-  }
+  void set(detail::ThreadCachedInts<void>* ints) { ints_ = ints; }
 
  private:
   detail::ThreadCachedInts<void>* ints_{nullptr};
@@ -445,8 +464,7 @@ TEST(ThreadLocal, TCICreateOnThreadExit) {
     ints.increment(1);
     // now the widget
     w->set(&ints);
-  })
-      .join();
+  }).join();
 }
 
 namespace {
@@ -477,14 +495,10 @@ class FillObject {
     }
   }
 
-  ~FillObject() {
-    ++gDestroyed;
-  }
+  ~FillObject() { ++gDestroyed; }
 
  private:
-  uint64_t val() const {
-    return (idx_ << 40) | folly::getCurrentThreadID();
-  }
+  uint64_t val() const { return (idx_ << 40) | folly::getCurrentThreadID(); }
 
   uint64_t idx_;
   uint64_t data_[kFillObjectSize];
@@ -604,9 +618,7 @@ class HoldsOne {
  public:
   HoldsOne() : value_(1) {}
   // Do an actual access to catch the buggy case where this == nullptr
-  int value() const {
-    return value_;
-  }
+  int value() const { return value_; }
 
  private:
   int value_;

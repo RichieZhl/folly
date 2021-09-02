@@ -15,8 +15,10 @@
  */
 
 #include <folly/container/Array.h>
-#include <folly/portability/GTest.h>
+
 #include <string>
+
+#include <folly/portability/GTest.h>
 
 using namespace std;
 using folly::make_array;
@@ -73,9 +75,7 @@ TEST(make_array, deduced_common_type) {
 
 TEST(make_array_with, example) {
   struct make_item {
-    constexpr int operator()(size_t index) const {
-      return index + 4;
-    }
+    constexpr int operator()(size_t index) const { return index + 4; }
   };
 
   constexpr auto actual = folly::make_array_with<3>(make_item{});

@@ -31,9 +31,7 @@ namespace {
 class StringAppender {
  public:
   /* implicit */ StringAppender(std::string& s) : s_(s) {}
-  void operator()(StringPiece sp) {
-    s_.append(sp.data(), sp.size());
-  }
+  void operator()(StringPiece sp) { s_.append(sp.data(), sp.size()); }
 
  private:
   std::string& s_;
@@ -83,12 +81,7 @@ void testGroupVarint32(uint32_t a, uint32_t b, uint32_t c, uint32_t d, ...) {
 }
 
 void testGroupVarint64(
-    uint64_t a,
-    uint64_t b,
-    uint64_t c,
-    uint64_t d,
-    uint64_t e,
-    ...) {
+    uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, ...) {
   va_list ap;
   va_start(ap, e);
   std::vector<char> expectedBytes;

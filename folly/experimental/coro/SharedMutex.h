@@ -18,7 +18,6 @@
 
 #include <atomic>
 #include <cassert>
-#include <experimental/coroutine>
 #include <limits>
 #include <mutex>
 #include <utility>
@@ -26,8 +25,11 @@
 #include <folly/Executor.h>
 #include <folly/SpinLock.h>
 #include <folly/Synchronized.h>
+#include <folly/experimental/coro/Coroutine.h>
 #include <folly/experimental/coro/SharedLock.h>
 #include <folly/experimental/coro/ViaIfAsync.h>
+
+#if FOLLY_HAS_COROUTINES
 
 namespace folly {
 namespace coro {
@@ -80,7 +82,7 @@ namespace coro {
 ///    }
 ///
 ///    folly::coro::Task<bool> contains(std::string value) const {
-///      auto lock = co_await mutex_.co_scoped_shared_lock();
+///      auto lock = co_await mutex_.co_scoped_lock_shared();
 ///      co_return values_.count(value) > 0;
 ///    }
 ///  };
@@ -163,7 +165,7 @@ class SharedMutexFair {
   /// .unlock_shared() to release the lock.
   [[nodiscard]] LockOperation<LockSharedAwaiter> co_lock_shared() noexcept;
 
-  /// Asynchronously acquire an exclusive lock on the mutex and return an object
+  /// Asynchronously acquire a shared lock on the mutex and return an object
   /// that will release the lock when it goes out of scope.
   ///
   /// Returns a SemiAwaitable<std::shared_lock<SharedMutexFair>> that, once
@@ -199,14 +201,12 @@ class SharedMutexFair {
     explicit LockAwaiterBase(SharedMutexFair& mutex, LockType lockType) noexcept
         : mutex_(&mutex), nextAwaiter_(nullptr), lockType_(lockType) {}
 
-    void resume() noexcept {
-      continuation_.resume();
-    }
+    void resume() noexcept { continuation_.resume(); }
 
     SharedMutexFair* mutex_;
     LockAwaiterBase* nextAwaiter_;
     LockAwaiterBase* nextReader_;
-    std::experimental::coroutine_handle<> continuation_;
+    coroutine_handle<> continuation_;
     LockType lockType_;
   };
 
@@ -215,12 +215,10 @@ class SharedMutexFair {
     explicit LockAwaiter(SharedMutexFair& mutex) noexcept
         : LockAwaiterBase(mutex, LockType::EXCLUSIVE) {}
 
-    bool await_ready() noexcept {
-      return mutex_->try_lock();
-    }
+    bool await_ready() noexcept { return mutex_->try_lock(); }
 
     FOLLY_CORO_AWAIT_SUSPEND_NONTRIVIAL_ATTRIBUTES bool await_suspend(
-        std::experimental::coroutine_handle<> continuation) noexcept {
+        coroutine_handle<> continuation) noexcept {
       auto lock = mutex_->state_.contextualLock();
 
       // Exclusive lock can only be acquired if it's currently unlocked.
@@ -244,12 +242,10 @@ class SharedMutexFair {
     explicit LockSharedAwaiter(SharedMutexFair& mutex) noexcept
         : LockAwaiterBase(mutex, LockType::SHARED) {}
 
-    bool await_ready() noexcept {
-      return mutex_->try_lock_shared();
-    }
+    bool await_ready() noexcept { return mutex_->try_lock_shared(); }
 
     FOLLY_CORO_AWAIT_SUSPEND_NONTRIVIAL_ATTRIBUTES bool await_suspend(
-        std::experimental::coroutine_handle<> continuation) noexcept {
+        coroutine_handle<> continuation) noexcept {
       auto lock = mutex_->state_.contextualLock();
 
       // shared-lock can be acquired if it's either unlocked or it is
@@ -357,3 +353,5 @@ using SharedMutex = SharedMutexFair;
 
 } // namespace coro
 } // namespace folly
+
+#endif // FOLLY_HAS_COROUTINES

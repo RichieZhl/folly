@@ -20,6 +20,12 @@
 
 class AtomicRefTest : public testing::Test {};
 
+TEST_F(AtomicRefTest, deduction) {
+  long value = 17;
+  auto ref = folly::atomic_ref{value}; // use deduction guide
+  EXPECT_EQ(17, ref.load(std::memory_order_relaxed));
+}
+
 TEST_F(AtomicRefTest, integer) {
   {
     long value = 17;
@@ -43,5 +49,91 @@ TEST_F(AtomicRefTest, integer) {
     auto prev = ref.fetch_sub(4, std::memory_order_relaxed);
     EXPECT_EQ(17, prev);
     EXPECT_EQ(13, value);
+  }
+}
+
+TEST_F(AtomicRefTest, integer_compare_exchange_weak) {
+  auto const relaxed = std::memory_order_relaxed;
+  {
+    long value = 17;
+    auto ref = folly::make_atomic_ref(value);
+    auto expected = value;
+    auto done = ref.compare_exchange_weak(expected, 19);
+    EXPECT_TRUE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(17, expected);
+    done = ref.compare_exchange_weak(expected, 21);
+    EXPECT_FALSE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(19, expected);
+  }
+  {
+    long value = 17;
+    auto ref = folly::make_atomic_ref(value);
+    auto expected = value;
+    auto done = ref.compare_exchange_weak(expected, 19, relaxed);
+    EXPECT_TRUE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(17, expected);
+    done = ref.compare_exchange_weak(expected, 21, relaxed);
+    EXPECT_FALSE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(19, expected);
+  }
+  {
+    long value = 17;
+    auto ref = folly::make_atomic_ref(value);
+    auto expected = value;
+    auto done = ref.compare_exchange_weak(expected, 19, relaxed, relaxed);
+    EXPECT_TRUE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(17, expected);
+    done = ref.compare_exchange_weak(expected, 21, relaxed, relaxed);
+    EXPECT_FALSE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(19, expected);
+  }
+}
+
+TEST_F(AtomicRefTest, integer_compare_exchange_strong) {
+  auto const relaxed = std::memory_order_relaxed;
+  {
+    long value = 17;
+    auto ref = folly::make_atomic_ref(value);
+    auto expected = value;
+    auto done = ref.compare_exchange_strong(expected, 19);
+    EXPECT_TRUE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(17, expected);
+    done = ref.compare_exchange_strong(expected, 21);
+    EXPECT_FALSE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(19, expected);
+  }
+  {
+    long value = 17;
+    auto ref = folly::make_atomic_ref(value);
+    auto expected = value;
+    auto done = ref.compare_exchange_strong(expected, 19, relaxed);
+    EXPECT_TRUE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(17, expected);
+    done = ref.compare_exchange_strong(expected, 21, relaxed);
+    EXPECT_FALSE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(19, expected);
+  }
+  {
+    long value = 17;
+    auto ref = folly::make_atomic_ref(value);
+    auto expected = value;
+    auto done = ref.compare_exchange_strong(expected, 19, relaxed, relaxed);
+    EXPECT_TRUE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(17, expected);
+    done = ref.compare_exchange_strong(expected, 21, relaxed, relaxed);
+    EXPECT_FALSE(done);
+    EXPECT_EQ(19, value);
+    EXPECT_EQ(19, expected);
   }
 }

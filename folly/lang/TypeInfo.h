@@ -18,6 +18,7 @@
 
 #include <typeinfo>
 
+#include <folly/CppAttributes.h>
 #include <folly/Portability.h>
 
 //  FOLLY_TYPE_INFO_OF
@@ -27,7 +28,8 @@
 #if FOLLY_HAS_RTTI
 #define FOLLY_TYPE_INFO_OF(...) (&typeid(__VA_ARGS__))
 #else
-#define FOLLY_TYPE_INFO_OF(...) (static_cast<std::type_info const*>(nullptr))
+#define FOLLY_TYPE_INFO_OF(...) \
+  ((sizeof(__VA_ARGS__)), static_cast<std::type_info const*>(nullptr))
 #endif
 
 namespace folly {
@@ -48,7 +50,8 @@ FOLLY_ALWAYS_INLINE static std::type_info const* type_info_of() {
 //
 //  This overload works on the dynamic type of the non-template parameter.
 template <typename T>
-FOLLY_ALWAYS_INLINE static std::type_info const* type_info_of(T const& t) {
+FOLLY_ALWAYS_INLINE static std::type_info const* type_info_of(
+    FOLLY_MAYBE_UNUSED T const& t) {
   return FOLLY_TYPE_INFO_OF(t);
 }
 

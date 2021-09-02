@@ -15,6 +15,7 @@
  */
 
 #include <folly/detail/AsyncTrace.h>
+
 #include <folly/portability/GTest.h>
 
 TEST(FollyCountersTest, Trivial) {
@@ -34,4 +35,9 @@ TEST(FollyCountersTest, Trivial) {
 
   folly::async_tracing::logSemiFutureVia(lastExec, exec);
   folly::async_tracing::logFutureVia(lastExec, exec);
+
+  folly::async_tracing::logBlockingOperation(std::chrono::milliseconds{100});
+
+  folly::async_tracing::logSemiFutureDiscard(
+      folly::async_tracing::DiscardHasDeferred::NO_EXECUTOR);
 }

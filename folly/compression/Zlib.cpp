@@ -83,8 +83,8 @@ class ZlibStreamCodec final : public StreamCodec {
   ~ZlibStreamCodec() override;
 
   std::vector<std::string> validPrefixes() const override;
-  bool canUncompress(const IOBuf* data, Optional<uint64_t> uncompressedLength)
-      const override;
+  bool canUncompress(
+      const IOBuf* data, Optional<uint64_t> uncompressedLength) const override;
 
  private:
   uint64_t doMaxCompressedLength(uint64_t uncompressedLength) const override;
@@ -157,8 +157,8 @@ std::vector<std::string> ZlibStreamCodec::validPrefixes() const {
   }
 }
 
-bool ZlibStreamCodec::canUncompress(const IOBuf* data, Optional<uint64_t>)
-    const {
+bool ZlibStreamCodec::canUncompress(
+    const IOBuf* data, Optional<uint64_t>) const {
   if (type() == CodecType::ZLIB) {
     uint16_t value;
     Cursor cursor{data};
@@ -183,14 +183,12 @@ uint64_t ZlibStreamCodec::doMaxCompressedLength(
 }
 
 std::unique_ptr<Codec> ZlibStreamCodec::createCodec(
-    Options options,
-    int level) {
+    Options options, int level) {
   return std::make_unique<ZlibStreamCodec>(options, level);
 }
 
 std::unique_ptr<StreamCodec> ZlibStreamCodec::createStream(
-    Options options,
-    int level) {
+    Options options, int level) {
   return std::make_unique<ZlibStreamCodec>(options, level);
 }
 
@@ -244,11 +242,11 @@ ZlibStreamCodec::ZlibStreamCodec(Options options, int level)
 ZlibStreamCodec::~ZlibStreamCodec() {
   if (deflateStream_) {
     deflateEnd(deflateStream_.get_pointer());
-    deflateStream_.clear();
+    deflateStream_.reset();
   }
   if (inflateStream_) {
     inflateEnd(inflateStream_.get_pointer());
-    inflateStream_.clear();
+    inflateStream_.reset();
   }
 }
 
@@ -260,7 +258,7 @@ void ZlibStreamCodec::resetDeflateStream() {
   if (deflateStream_) {
     int const rc = deflateReset(deflateStream_.get_pointer());
     if (rc != Z_OK) {
-      deflateStream_.clear();
+      deflateStream_.reset();
       throw std::runtime_error(
           to<std::string>("ZlibStreamCodec: deflateReset error: ", rc));
     }
@@ -283,7 +281,7 @@ void ZlibStreamCodec::resetDeflateStream() {
       options_.memLevel,
       options_.strategy);
   if (rc != Z_OK) {
-    deflateStream_.clear();
+    deflateStream_.reset();
     throw std::runtime_error(
         to<std::string>("ZlibStreamCodec: deflateInit error: ", rc));
   }
@@ -293,7 +291,7 @@ void ZlibStreamCodec::resetInflateStream() {
   if (inflateStream_) {
     int const rc = inflateReset(inflateStream_.get_pointer());
     if (rc != Z_OK) {
-      inflateStream_.clear();
+      inflateStream_.reset();
       throw std::runtime_error(
           to<std::string>("ZlibStreamCodec: inflateReset error: ", rc));
     }
@@ -304,7 +302,7 @@ void ZlibStreamCodec::resetInflateStream() {
       inflateStream_.get_pointer(),
       getWindowBits(options_.format, options_.windowSize));
   if (rc != Z_OK) {
-    inflateStream_.clear();
+    inflateStream_.reset();
     throw std::runtime_error(
         to<std::string>("ZlibStreamCodec: inflateInit error: ", rc));
   }
@@ -335,14 +333,12 @@ int zlibThrowOnError(int rc) {
 }
 
 bool ZlibStreamCodec::doCompressStream(
-    ByteRange& input,
-    MutableByteRange& output,
-    StreamCodec::FlushOp flush) {
+    ByteRange& input, MutableByteRange& output, StreamCodec::FlushOp flush) {
   if (needReset_) {
     resetDeflateStream();
     needReset_ = false;
   }
-  DCHECK(deflateStream_.hasValue());
+  DCHECK(deflateStream_.has_value());
   // zlib will return Z_STREAM_ERROR if output.data() is null.
   if (output.data() == nullptr) {
     return false;
@@ -370,14 +366,12 @@ bool ZlibStreamCodec::doCompressStream(
 }
 
 bool ZlibStreamCodec::doUncompressStream(
-    ByteRange& input,
-    MutableByteRange& output,
-    StreamCodec::FlushOp flush) {
+    ByteRange& input, MutableByteRange& output, StreamCodec::FlushOp flush) {
   if (needReset_) {
     resetInflateStream();
     needReset_ = false;
   }
-  DCHECK(inflateStream_.hasValue());
+  DCHECK(inflateStream_.has_value());
   // zlib will return Z_STREAM_ERROR if output.data() is null.
   if (output.data() == nullptr) {
     return false;

@@ -63,19 +63,13 @@ class HistogramBuckets {
       const BucketType& defaultBucket);
 
   /* Returns the bucket size of each bucket in the histogram. */
-  ValueType getBucketSize() const {
-    return bucketSize_;
-  }
+  ValueType getBucketSize() const { return bucketSize_; }
 
   /* Returns the min value at which bucketing begins. */
-  ValueType getMin() const {
-    return min_;
-  }
+  ValueType getMin() const { return min_; }
 
   /* Returns the max value at which bucketing ends. */
-  ValueType getMax() const {
-    return max_;
-  }
+  ValueType getMax() const { return max_; }
 
   /*
    * Returns the number of buckets.
@@ -84,9 +78,7 @@ class HistogramBuckets {
    * plus 2 extra buckets, one for handling values less than min, and one for
    * values greater than max.
    */
-  size_t getNumBuckets() const {
-    return buckets_.size();
-  }
+  size_t getNumBuckets() const { return buckets_.size(); }
 
   /* Returns the bucket index into which the given value would fall. */
   size_t getBucketIdx(ValueType value) const;
@@ -107,14 +99,10 @@ class HistogramBuckets {
    * Note that index 0 is the bucket for all values less than the specified
    * minimum.  Index 1 is the first bucket in the specified bucket range.
    */
-  BucketType& getByIndex(size_t idx) {
-    return buckets_[idx];
-  }
+  BucketType& getByIndex(size_t idx) { return buckets_[idx]; }
 
   /* Returns the bucket at the specified index. */
-  const BucketType& getByIndex(size_t idx) const {
-    return buckets_[idx];
-  }
+  const BucketType& getByIndex(size_t idx) const { return buckets_[idx]; }
 
   /*
    * Returns the minimum threshold for the bucket at the given index.
@@ -198,9 +186,7 @@ class HistogramBuckets {
    */
   template <typename CountFn, typename AvgFn>
   ValueType getPercentileEstimate(
-      double pct,
-      CountFn countFromBucket,
-      AvgFn avgFromBucket) const;
+      double pct, CountFn countFromBucket, AvgFn avgFromBucket) const;
 
   /*
    * Iterator access to the buckets.
@@ -218,9 +204,7 @@ class HistogramBuckets {
   typename std::vector<BucketType>::const_iterator end() const {
     return buckets_.end();
   }
-  typename std::vector<BucketType>::iterator end() {
-    return buckets_.end();
-  }
+  typename std::vector<BucketType>::iterator end() { return buckets_.end(); }
 
  private:
   static constexpr bool kIsExact = std::numeric_limits<ValueType>::is_exact;
@@ -357,21 +341,13 @@ class Histogram {
   }
 
   /* Returns the bucket size of each bucket in the histogram. */
-  ValueType getBucketSize() const {
-    return buckets_.getBucketSize();
-  }
+  ValueType getBucketSize() const { return buckets_.getBucketSize(); }
   /* Returns the min value at which bucketing begins. */
-  ValueType getMin() const {
-    return buckets_.getMin();
-  }
+  ValueType getMin() const { return buckets_.getMin(); }
   /* Returns the max value at which bucketing ends. */
-  ValueType getMax() const {
-    return buckets_.getMax();
-  }
+  ValueType getMax() const { return buckets_.getMax(); }
   /* Returns the number of buckets */
-  size_t getNumBuckets() const {
-    return buckets_.getNumBuckets();
-  }
+  size_t getNumBuckets() const { return buckets_.getNumBuckets(); }
 
   /* Returns the specified bucket (for reading only!) */
   const Bucket& getBucketByIndex(size_t idx) const {
@@ -417,9 +393,7 @@ class Histogram {
    * returned in the lowPct and highPct arguments, if they are not nullptr.
    */
   size_t getPercentileBucketIdx(
-      double pct,
-      double* lowPct = nullptr,
-      double* highPct = nullptr) const {
+      double pct, double* lowPct = nullptr, double* highPct = nullptr) const {
     // We unfortunately can't use lambdas here yet;
     // Some users of this code are still built with gcc-4.4.
     CountFromBucket countFn;
@@ -452,9 +426,7 @@ class Histogram {
   void toTSV(std::ostream& out, bool skipEmptyBuckets = true) const;
 
   struct CountFromBucket {
-    uint64_t operator()(const Bucket& bucket) const {
-      return bucket.count;
-    }
+    uint64_t operator()(const Bucket& bucket) const { return bucket.count; }
   };
   struct AvgFromBucket {
     ValueType operator()(const Bucket& bucket) const {

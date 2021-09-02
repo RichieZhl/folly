@@ -15,11 +15,11 @@
  */
 
 #include <folly/io/async/DestructorCheck.h>
+
 #include <folly/Memory.h>
 #include <folly/portability/GTest.h>
 
 using namespace folly;
-using namespace testing;
 
 class Derived : public DestructorCheck {};
 

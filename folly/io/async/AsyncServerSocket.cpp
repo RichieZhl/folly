@@ -20,7 +20,13 @@
 
 #include <folly/io/async/AsyncServerSocket.h>
 
+#include <sys/types.h>
+
+#include <cerrno>
+#include <cstring>
+
 #include <folly/FileUtil.h>
+#include <folly/GLog.h>
 #include <folly/Portability.h>
 #include <folly/SocketAddress.h>
 #include <folly/String.h>
@@ -30,10 +36,6 @@
 #include <folly/portability/Fcntl.h>
 #include <folly/portability/Sockets.h>
 #include <folly/portability/Unistd.h>
-
-#include <sys/types.h>
-#include <cerrno>
-#include <cstring>
 
 namespace folly {
 
@@ -57,51 +59,45 @@ const uint32_t AsyncServerSocket::kDefaultCallbackAcceptAtOnce;
 const uint32_t AsyncServerSocket::kDefaultMaxMessagesInQueue;
 
 void AsyncServerSocket::RemoteAcceptor::start(
-    EventBase* eventBase,
-    uint32_t maxAtOnce,
-    uint32_t maxInQueue) {
-  setMaxReadAtOnce(maxAtOnce);
-  queue_.setMaxQueueSize(maxInQueue);
+    EventBase* eventBase, uint32_t maxAtOnce) {
+  queue_.setMaxReadAtOnce(maxAtOnce);
 
   eventBase->runInEventBaseThread([=]() {
     callback_->acceptStarted();
-    this->startConsuming(eventBase, &queue_);
+    queue_.startConsuming(eventBase);
   });
 }
 
 void AsyncServerSocket::RemoteAcceptor::stop(
-    EventBase* eventBase,
-    AcceptCallback* callback) {
+    EventBase* eventBase, AcceptCallback* callback) {
   eventBase->runInEventBaseThread([=]() {
     callback->acceptStopped();
     delete this;
   });
 }
 
-void AsyncServerSocket::RemoteAcceptor::messageAvailable(
-    QueueMessage&& msg) noexcept {
-  switch (msg.type) {
-    case MessageType::MSG_NEW_CONN: {
-      if (connectionEventCallback_) {
-        connectionEventCallback_->onConnectionDequeuedByAcceptorCallback(
-            msg.fd, msg.address);
-      }
-      callback_->connectionAccepted(msg.fd, msg.address);
-      break;
+AtomicNotificationQueueTaskStatus AsyncServerSocket::NewConnMessage::operator()(
+    RemoteAcceptor& acceptor) noexcept {
+  if (isExpired()) {
+    closeNoInt(fd);
+    if (acceptor.connectionEventCallback_) {
+      acceptor.connectionEventCallback_->onConnectionDropped(fd, clientAddr);
     }
-    case MessageType::MSG_ERROR: {
-      std::runtime_error ex(msg.msg);
-      callback_->acceptError(ex);
-      break;
-    }
-    default: {
-      LOG(ERROR) << "invalid accept notification message type "
-                 << int(msg.type);
-      std::runtime_error ex(
-          "received invalid accept notification message type");
-      callback_->acceptError(ex);
-    }
+    return AtomicNotificationQueueTaskStatus::DISCARD;
   }
+  if (acceptor.connectionEventCallback_) {
+    acceptor.connectionEventCallback_->onConnectionDequeuedByAcceptorCallback(
+        fd, clientAddr);
+  }
+  acceptor.callback_->connectionAccepted(fd, clientAddr);
+  return AtomicNotificationQueueTaskStatus::CONSUMED;
+}
+
+AtomicNotificationQueueTaskStatus AsyncServerSocket::ErrorMessage::operator()(
+    RemoteAcceptor& acceptor) noexcept {
+  auto ex = make_exception_wrapper<std::runtime_error>(msg);
+  acceptor.callback_->acceptError(std::move(ex));
+  return AtomicNotificationQueueTaskStatus::CONSUMED;
 }
 
 /*
@@ -114,9 +110,7 @@ class AsyncServerSocket::BackoffTimeout : public AsyncTimeout {
   explicit BackoffTimeout(AsyncServerSocket* socket)
       : AsyncTimeout(socket->getEventBase()), socket_(socket) {}
 
-  void timeoutExpired() noexcept override {
-    socket_->backoffTimeoutExpired();
-  }
+  void timeoutExpired() noexcept override { socket_->backoffTimeoutExpired(); }
 
  private:
   AsyncServerSocket* socket_;
@@ -297,10 +291,26 @@ void AsyncServerSocket::useExistingSocket(NetworkSocket fd) {
 void AsyncServerSocket::bindSocket(
     NetworkSocket fd,
     const SocketAddress& address,
-    bool isExistingSocket) {
+    bool isExistingSocket,
+    const std::string& ifName) {
   sockaddr_storage addrStorage;
   address.getAddress(&addrStorage);
   auto saddr = reinterpret_cast<sockaddr*>(&addrStorage);
+
+#if defined(__linux__)
+  if (!ifName.empty() &&
+      netops::setsockopt(
+          fd, SOL_SOCKET, SO_BINDTODEVICE, ifName.c_str(), ifName.length())) {
+    auto errnoCopy = errno;
+    if (!isExistingSocket) {
+      closeNoInt(fd);
+    }
+    folly::throwSystemErrorExplicit(
+        errnoCopy, "failed to bind to device: " + ifName);
+  }
+#else
+  (void)ifName;
+#endif
 
   if (netops::bind(fd, saddr, address.getActualSize()) != 0) {
     if (errno != EINPROGRESS) {
@@ -309,7 +319,7 @@ void AsyncServerSocket::bindSocket(
       if (!isExistingSocket) {
         closeNoInt(fd);
       }
-      folly::throwSystemError(
+      folly::throwSystemErrorExplicit(
           errnoCopy,
           "failed to bind to async server socket: " + address.describe());
     }
@@ -347,7 +357,8 @@ bool AsyncServerSocket::setZeroCopy(bool enable) {
   return false;
 }
 
-void AsyncServerSocket::bind(const SocketAddress& address) {
+void AsyncServerSocket::bindInternal(
+    const SocketAddress& address, const std::string& ifName) {
   if (eventBase_) {
     eventBase_->dcheckIsInEventBaseThread();
   }
@@ -370,12 +381,20 @@ void AsyncServerSocket::bind(const SocketAddress& address) {
     throw std::invalid_argument("Attempted to bind to multiple fds");
   }
 
-  bindSocket(fd, address, !sockets_.empty());
+  bindSocket(fd, address, !sockets_.empty(), ifName);
+}
+
+void AsyncServerSocket::bind(const SocketAddress& address) {
+  bindInternal(address, "");
 }
 
 void AsyncServerSocket::bind(
-    const std::vector<IPAddress>& ipAddresses,
-    uint16_t port) {
+    const SocketAddress& address, const std::string& ifName) {
+  bindInternal(address, ifName);
+}
+
+void AsyncServerSocket::bind(
+    const std::vector<IPAddress>& ipAddresses, uint16_t port) {
   if (ipAddresses.empty()) {
     throw std::invalid_argument("No ip addresses were provided");
   }
@@ -387,7 +406,28 @@ void AsyncServerSocket::bind(
     SocketAddress address(ipAddress.toFullyQualified(), port);
     auto fd = createSocket(address.getFamily());
 
-    bindSocket(fd, address, false);
+    bindSocket(fd, address, false, "");
+  }
+  if (sockets_.empty()) {
+    throw std::runtime_error(
+        "did not bind any async server socket for port and addresses");
+  }
+}
+
+void AsyncServerSocket::bind(
+    const std::vector<IPAddressIfNamePair>& addresses, uint16_t port) {
+  if (addresses.empty()) {
+    throw std::invalid_argument("No ip addresses were provided");
+  }
+  if (eventBase_) {
+    eventBase_->dcheckIsInEventBaseThread();
+  }
+
+  for (const auto& addr : addresses) {
+    SocketAddress address(addr.first.toFullyQualified(), port);
+    auto fd = createSocket(address.getFamily());
+
+    bindSocket(fd, address, false, addr.second);
   }
   if (sockets_.empty()) {
     throw std::runtime_error(
@@ -414,9 +454,7 @@ void AsyncServerSocket::bind(uint16_t port) {
         "bad getaddrinfo");
   }
 
-  SCOPE_EXIT {
-    freeaddrinfo(res0);
-  };
+  SCOPE_EXIT { freeaddrinfo(res0); };
 
   auto setupAddress = [&](struct addrinfo* res) {
     auto s = netops::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
@@ -561,9 +599,7 @@ std::vector<SocketAddress> AsyncServerSocket::getAddresses() const {
 }
 
 void AsyncServerSocket::addAcceptCallback(
-    AcceptCallback* callback,
-    EventBase* eventBase,
-    uint32_t maxAtOnce) {
+    AcceptCallback* callback, EventBase* eventBase, uint32_t maxAtOnce) {
   if (eventBase_) {
     eventBase_->dcheckIsInEventBaseThread();
   }
@@ -601,7 +637,7 @@ void AsyncServerSocket::addAcceptCallback(
   RemoteAcceptor* acceptor = nullptr;
   try {
     acceptor = new RemoteAcceptor(callback, connectionEventCallback_);
-    acceptor->start(eventBase, maxAtOnce, maxNumMsgsInQueue_);
+    acceptor->start(eventBase, maxAtOnce);
   } catch (...) {
     callbacks_.pop_back();
     delete acceptor;
@@ -611,8 +647,7 @@ void AsyncServerSocket::addAcceptCallback(
 }
 
 void AsyncServerSocket::removeAcceptCallback(
-    AcceptCallback* callback,
-    EventBase* eventBase) {
+    AcceptCallback* callback, EventBase* eventBase) {
   if (eventBase_) {
     eventBase_->dcheckIsInEventBaseThread();
   }
@@ -733,7 +768,7 @@ NetworkSocket AsyncServerSocket::createSocket(int family) {
  * TOS derived from the client's connect request
  */
 void AsyncServerSocket::setTosReflect(bool enable) {
-  if (!kIsLinux || enable == false) {
+  if (!kIsLinux || !enable) {
     tosReflect_ = false;
     return;
   }
@@ -756,6 +791,34 @@ void AsyncServerSocket::setTosReflect(bool enable) {
   tosReflect_ = true;
 }
 
+void AsyncServerSocket::setListenerTos(uint32_t tos) {
+  if (!kIsLinux || tos == 0) {
+    listenerTos_ = 0;
+    return;
+  }
+
+  for (auto& handler : sockets_) {
+    if (handler.socket_ == NetworkSocket()) {
+      continue;
+    }
+
+    const auto proto =
+        (handler.addressFamily_ == AF_INET) ? IPPROTO_IP : IPPROTO_IPV6;
+    const auto optName =
+        (handler.addressFamily_ == AF_INET) ? IP_TOS : IPV6_TCLASS;
+
+    int ret =
+        netops::setsockopt(handler.socket_, proto, optName, &tos, sizeof(tos));
+
+    if (ret == 0) {
+      VLOG(10) << "Set TOS " << tos << " for for socket " << handler.socket_;
+    } else {
+      folly::throwSystemError(errno, "failed to set TOS for socket");
+    }
+  }
+  listenerTos_ = tos;
+}
+
 void AsyncServerSocket::setupSocket(NetworkSocket fd, int family) {
   // Put the socket in non-blocking mode
   if (netops::set_socket_non_blocking(fd) != 0) {
@@ -766,8 +829,10 @@ void AsyncServerSocket::setupSocket(NetworkSocket fd, int family) {
   int one = 1;
   if (netops::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) !=
       0) {
+    auto errnoCopy = errno;
     // This isn't a fatal error; just log an error message and continue
-    LOG(ERROR) << "failed to set SO_REUSEADDR on async server socket " << errno;
+    LOG(ERROR) << "failed to set SO_REUSEADDR on async server socket "
+               << errnoCopy;
   }
 
   // Set reuseport to support multiple accept threads
@@ -775,15 +840,19 @@ void AsyncServerSocket::setupSocket(NetworkSocket fd, int family) {
   if (reusePortEnabled_ &&
       netops::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(int)) !=
           0) {
+    auto errnoCopy = errno;
     LOG(ERROR) << "failed to set SO_REUSEPORT on async server socket "
-               << errnoStr(errno);
+               << errnoStr(errnoCopy);
 #ifdef WIN32
-    folly::throwSystemError(errno, "failed to bind to the async server socket");
+    folly::throwSystemErrorExplicit(
+        errnoCopy, "failed to set SO_REUSEPORT on async server socket");
 #else
     SocketAddress address;
     address.setFromLocalAddress(fd);
-    folly::throwSystemError(
-        errno, "failed to bind to async server socket: " + address.describe());
+    folly::throwSystemErrorExplicit(
+        errnoCopy,
+        "failed to set SO_REUSEPORT on async server socket: " +
+            address.describe());
 #endif
   }
 
@@ -794,14 +863,16 @@ void AsyncServerSocket::setupSocket(NetworkSocket fd, int family) {
           SO_KEEPALIVE,
           (keepAliveEnabled_) ? &one : &zero,
           sizeof(int)) != 0) {
+    auto errnoCopy = errno;
     LOG(ERROR) << "failed to set SO_KEEPALIVE on async server socket: "
-               << errnoStr(errno);
+               << errnoStr(errnoCopy);
   }
 
   // Setup FD_CLOEXEC flag
   if (closeOnExec_ && (-1 == netops::set_socket_close_on_exec(fd))) {
+    auto errnoCopy = errno;
     LOG(ERROR) << "failed to set FD_CLOEXEC on async server socket: "
-               << errnoStr(errno);
+               << errnoStr(errnoCopy);
   }
 
   // Set TCP nodelay if available, MAC OS X Hack
@@ -810,9 +881,10 @@ void AsyncServerSocket::setupSocket(NetworkSocket fd, int family) {
   if (family != AF_UNIX) {
     if (netops::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) !=
         0) {
+      auto errnoCopy = errno;
       // This isn't a fatal error; just log an error message and continue
       LOG(ERROR) << "failed to set TCP_NODELAY on async server socket: "
-                 << errnoStr(errno);
+                 << errnoStr(errnoCopy);
     }
   }
 #else
@@ -821,9 +893,10 @@ void AsyncServerSocket::setupSocket(NetworkSocket fd, int family) {
 
 #if FOLLY_ALLOW_TFO
   if (tfo_ && detail::tfo_enable(fd, tfoMaxQueueSize_) != 0) {
+    auto errnoCopy = errno;
     // This isn't a fatal error; just log an error message and continue
     LOG(WARNING) << "failed to set TCP_FASTOPEN on async server socket: "
-                 << folly::errnoStr(errno);
+                 << folly::errnoStr(errnoCopy);
   }
 #endif
 
@@ -832,8 +905,9 @@ void AsyncServerSocket::setupSocket(NetworkSocket fd, int family) {
     int ret =
         netops::setsockopt(fd, SOL_SOCKET, SO_ZEROCOPY, &val, sizeof(val));
     if (ret) {
+      auto errnoCopy = errno;
       LOG(WARNING) << "failed to set SO_ZEROCOPY on async server socket: "
-                   << folly::errnoStr(errno);
+                   << folly::errnoStr(errnoCopy);
     }
   }
 
@@ -989,8 +1063,7 @@ void AsyncServerSocket::handlerReady(
 }
 
 void AsyncServerSocket::dispatchSocket(
-    NetworkSocket socket,
-    SocketAddress&& address) {
+    NetworkSocket socket, SocketAddress&& address) {
   uint32_t startingIndex = callbackIndex_;
 
   // Short circuit if the callback is in the primary EventBase thread
@@ -1003,14 +1076,17 @@ void AsyncServerSocket::dispatchSocket(
 
   const SocketAddress addr(address);
   // Create a message to send over the notification queue
-  QueueMessage msg;
-  msg.type = MessageType::MSG_NEW_CONN;
-  msg.address = std::move(address);
-  msg.fd = socket;
+  auto queueTimeout = *queueTimeout_;
+  std::chrono::steady_clock::time_point deadline;
+  if (queueTimeout.count() != 0) {
+    deadline = std::chrono::steady_clock::now() + queueTimeout;
+  }
+  NewConnMessage msg{socket, std::move(address), deadline};
 
   // Loop until we find a free queue to write to
   while (true) {
-    if (info->consumer->getQueue()->tryPutMessageNoThrow(std::move(msg))) {
+    if (info->consumer->getQueue().tryPutMessage(
+            std::move(msg), maxNumMsgsInQueue_)) {
       if (connectionEventCallback_) {
         connectionEventCallback_->onConnectionEnqueuedForAcceptorCallback(
             socket, addr);
@@ -1038,8 +1114,9 @@ void AsyncServerSocket::dispatchSocket(
       // should use pauseAccepting() to temporarily back off accepting new
       // connections, before they reach the point where their threads can't
       // even accept new messages.
-      LOG_EVERY_N(ERROR, 100) << "failed to dispatch newly accepted socket:"
-                              << " all accept callback queues are full";
+      FB_LOG_EVERY_MS(ERROR, 1000)
+          << "failed to dispatch newly accepted socket:"
+          << " all accept callback queues are full";
       closeNoInt(socket);
       if (connectionEventCallback_) {
         connectionEventCallback_->onConnectionDropped(socket, addr);
@@ -1056,21 +1133,19 @@ void AsyncServerSocket::dispatchError(const char* msgstr, int errnoValue) {
   CallbackInfo* info = nextCallback();
 
   // Create a message to send over the notification queue
-  QueueMessage msg;
-  msg.type = MessageType::MSG_ERROR;
-  msg.err = errnoValue;
-  msg.msg = std::move(msgstr);
+  ErrorMessage msg{errnoValue, msgstr};
 
   while (true) {
     // Short circuit if the callback is in the primary EventBase thread
     if (info->eventBase == nullptr || info->eventBase == this->eventBase_) {
-      std::runtime_error ex(
+      auto ex = make_exception_wrapper<std::runtime_error>(
           std::string(msgstr) + folly::to<std::string>(errnoValue));
-      info->callback->acceptError(ex);
+      info->callback->acceptError(std::move(ex));
       return;
     }
 
-    if (info->consumer->getQueue()->tryPutMessageNoThrow(std::move(msg))) {
+    if (info->consumer->getQueue().tryPutMessage(
+            std::move(msg), maxNumMsgsInQueue_)) {
       return;
     }
     // Fall through and try another callback
@@ -1078,7 +1153,7 @@ void AsyncServerSocket::dispatchError(const char* msgstr, int errnoValue) {
     if (callbackIndex_ == startingIndex) {
       // The notification queues for all of the callbacks were full.
       // We can't really do anything at this point.
-      LOG_EVERY_N(ERROR, 100)
+      FB_LOG_EVERY_MS(ERROR, 1000)
           << "failed to dispatch accept error: all accept"
           << " callback queues are full: error msg:  " << msg.msg << ": "
           << errnoValue;

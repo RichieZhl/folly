@@ -36,7 +36,12 @@ namespace compression {
  * make for less contention, but mean that a context is less likely to be hot
  * in cache.
  */
-template <typename T, typename Creator, typename Deleter, size_t NumStripes = 8>
+template <
+    typename T,
+    typename Creator,
+    typename Deleter,
+    typename Resetter,
+    size_t NumStripes = 8>
 class CompressionCoreLocalContextPool {
  private:
   /**
@@ -51,22 +56,22 @@ class CompressionCoreLocalContextPool {
 
   class ReturnToPoolDeleter {
    public:
-    using Pool =
-        CompressionCoreLocalContextPool<T, Creator, Deleter, NumStripes>;
+    using Pool = CompressionCoreLocalContextPool<
+        T,
+        Creator,
+        Deleter,
+        Resetter,
+        NumStripes>;
 
-    explicit ReturnToPoolDeleter(Pool* pool) : pool_(pool) {
-      DCHECK(pool_);
-    }
+    explicit ReturnToPoolDeleter(Pool* pool) : pool_(pool) { DCHECK(pool_); }
 
-    void operator()(T* ptr) {
-      pool_->store(ptr);
-    }
+    void operator()(T* ptr) { pool_->store(ptr); }
 
    private:
     Pool* pool_;
   };
 
-  using BackingPool = CompressionContextPool<T, Creator, Deleter>;
+  using BackingPool = CompressionContextPool<T, Creator, Deleter, Resetter>;
   using BackingPoolRef = typename BackingPool::Ref;
 
  public:
@@ -75,8 +80,10 @@ class CompressionCoreLocalContextPool {
 
   explicit CompressionCoreLocalContextPool(
       Creator creator = Creator(),
-      Deleter deleter = Deleter())
-      : pool_(std::move(creator), std::move(deleter)), caches_() {}
+      Deleter deleter = Deleter(),
+      Resetter resetter = Resetter())
+      : pool_(std::move(creator), std::move(deleter), std::move(resetter)),
+        caches_() {}
 
   ~CompressionCoreLocalContextPool() {
     for (auto& cache : caches_) {
@@ -96,17 +103,14 @@ class CompressionCoreLocalContextPool {
     return Ref(ptr, get_deleter());
   }
 
-  Ref getNull() {
-    return Ref(nullptr, get_deleter());
-  }
+  Ref getNull() { return Ref(nullptr, get_deleter()); }
 
  private:
-  ReturnToPoolDeleter get_deleter() {
-    return ReturnToPoolDeleter(this);
-  }
+  ReturnToPoolDeleter get_deleter() { return ReturnToPoolDeleter(this); }
 
   void store(T* ptr) {
     DCHECK(ptr);
+    pool_.get_resetter()(ptr);
     T* expected = nullptr;
     const bool stored = local().ptr.compare_exchange_weak(expected, ptr);
     if (!stored) {

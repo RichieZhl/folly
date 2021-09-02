@@ -15,8 +15,6 @@
  */
 
 #include <folly/Expected.h>
-#include <folly/Portability.h>
-#include <folly/portability/GTest.h>
 
 #include <algorithm>
 #include <iomanip>
@@ -26,6 +24,9 @@
 #include <vector>
 
 #include <glog/logging.h>
+
+#include <folly/Portability.h>
+#include <folly/portability/GTest.h>
 
 using std::shared_ptr;
 using std::unique_ptr;
@@ -531,12 +532,8 @@ class ContainsExpected {
  public:
   ContainsExpected() {}
   explicit ContainsExpected(int x) : ex_(x) {}
-  bool hasValue() const {
-    return ex_.hasValue();
-  }
-  int value() const {
-    return ex_.value();
-  }
+  bool hasValue() const { return ex_.hasValue(); }
+  int value() const { return ex_.value(); }
 
   ContainsExpected(const ContainsExpected& other) = default;
   ContainsExpected& operator=(const ContainsExpected& other) = default;
@@ -809,16 +806,12 @@ struct LargePODConstructTo {
 struct NonPODConstructTo {
   explicit NonPODConstructTo(Source) {}
   NonPODConstructTo(NonPODConstructTo const&) {}
-  NonPODConstructTo& operator=(NonPODConstructTo const&) {
-    return *this;
-  }
+  NonPODConstructTo& operator=(NonPODConstructTo const&) { return *this; }
 };
 
 struct ConvertTo {
   explicit ConvertTo(Source) {}
-  ConvertTo& operator=(Source) {
-    return *this;
-  }
+  ConvertTo& operator=(Source) { return *this; }
 };
 
 static_assert(
@@ -845,8 +838,7 @@ static_assert(constructibleNotConvertible<LargePODConstructTo>(), "");
 static_assert(constructibleNotConvertible<NonPODConstructTo>(), "");
 
 static_assert(
-    expected_detail::IsConvertible<Source, ConvertTo>(),
-    "convertible");
+    expected_detail::IsConvertible<Source, ConvertTo>(), "convertible");
 } // namespace
 
 TEST(Expected, GitHubIssue1111) {
@@ -885,4 +877,20 @@ TEST(Expected, ConstructorConstructibleNotConvertible) {
     ce = e;
   }
 }
+
+TEST(Expected, TestUnique) {
+  auto mk = []() -> Expected<std::unique_ptr<int>, int> {
+    return std::make_unique<int>(1);
+  };
+
+  EXPECT_EQ(
+      2, **mk().then([](auto r) { return std::make_unique<int>(*r + 1); }));
+
+  // Test converting errors works
+  EXPECT_EQ(
+      2, **mk().then([](auto r) -> Expected<std::unique_ptr<int>, double> {
+        return std::make_unique<int>(*r + 1);
+      }));
+}
+
 } // namespace folly

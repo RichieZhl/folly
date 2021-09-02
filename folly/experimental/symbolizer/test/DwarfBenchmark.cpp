@@ -18,27 +18,44 @@
 #include <folly/Range.h>
 #include <folly/experimental/symbolizer/Dwarf.h>
 #include <folly/experimental/symbolizer/SymbolizedFrame.h>
+#include <folly/experimental/symbolizer/Symbolizer.h>
+#include <folly/experimental/symbolizer/test/SymbolizerTestUtils.h>
 #include <folly/portability/GFlags.h>
 
-void dummy() {}
+#if FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF
 
 namespace {
 
 using namespace folly::symbolizer;
+using namespace folly::symbolizer::test;
+
+FOLLY_NOINLINE void lexicalBlockBar() try {
+  size_t unused = 0;
+  unused++;
+  inlineB_inlineA_qsort();
+} catch (...) {
+  folly::assume_unreachable();
+}
 
 void run(LocationInfoMode mode, size_t n) {
   folly::BenchmarkSuspender suspender;
-  // NOTE: Using '/proc/self/exe' only works if the code for @dummy is
-  // statically linked into the binary.
+  Symbolizer symbolizer(nullptr, LocationInfoMode::FULL_WITH_INLINE, 0);
+  FrameArray<100> frames;
+  gComparatorGetStackTraceArg = &frames;
+  gComparatorGetStackTrace = (bool (*)(void*))getStackTrace<100>;
+  lexicalBlockBar();
+  symbolizer.symbolize(frames);
+  // The address of the line where lexicalBlockBar calls inlineB_inlineA_qsort.
+  uintptr_t address = frames.frames[7].addr;
+
   ElfFile elf("/proc/self/exe");
   Dwarf dwarf(&elf);
+  auto inlineFrames = std::array<SymbolizedFrame, 10>();
   suspender.dismiss();
+
   for (size_t i = 0; i < n; i++) {
     LocationInfo info;
-    auto inlineFrames =
-        std::array<SymbolizedFrame, Dwarf::kMaxInlineLocationInfoPerFrame>();
-    dwarf.findAddress(
-        uintptr_t(&dummy), mode, info, folly::range(inlineFrames));
+    dwarf.findAddress(address, mode, info, folly::range(inlineFrames));
   }
 }
 
@@ -55,6 +72,8 @@ BENCHMARK(DwarfFindAddressFull, n) {
 BENCHMARK(DwarfFindAddressFullWithInline, n) {
   run(folly::symbolizer::LocationInfoMode::FULL_WITH_INLINE, n);
 }
+
+#endif // FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF
 
 int main(int argc, char* argv[]) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);

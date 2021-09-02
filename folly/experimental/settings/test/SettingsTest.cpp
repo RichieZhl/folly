@@ -15,6 +15,7 @@
  */
 
 #include <folly/experimental/settings/Settings.h>
+
 #include <folly/Format.h>
 #include <folly/portability/GTest.h>
 
@@ -23,11 +24,7 @@
 
 namespace some_ns {
 FOLLY_SETTING_DEFINE(
-    follytest,
-    some_flag,
-    std::string,
-    "default",
-    "Description");
+    follytest, some_flag, std::string, "default", "Description");
 FOLLY_SETTING_DEFINE(
     follytest,
     unused,
@@ -98,7 +95,7 @@ TEST(Settings, user_defined) {
   {
     folly::settings::Snapshot sn;
     auto info = sn.getAsString("follytest_user_defined");
-    EXPECT_TRUE(info.hasValue());
+    EXPECT_TRUE(info.has_value());
     EXPECT_EQ(info->first, "a_out");
     EXPECT_EQ(info->second, "test");
   }
@@ -113,7 +110,7 @@ TEST(Settings, user_defined) {
   {
     folly::settings::Snapshot sn;
     auto info = sn.getAsString("follytest_user_defined");
-    EXPECT_TRUE(info.hasValue());
+    EXPECT_TRUE(info.has_value());
     EXPECT_EQ(info->first, "a_out");
     EXPECT_EQ(info->second, "test");
   }
@@ -126,7 +123,7 @@ TEST(Settings, user_defined) {
   {
     folly::settings::Snapshot sn;
     auto info = sn.getAsString("follytest_user_defined");
-    EXPECT_TRUE(info.hasValue());
+    EXPECT_TRUE(info.has_value());
     EXPECT_EQ(info->first, "b_out");
     EXPECT_EQ(info->second, "default");
   }
@@ -140,7 +137,7 @@ TEST(Settings, user_defined) {
   {
     folly::settings::Snapshot sn;
     auto info = sn.getAsString("follytest_user_defined");
-    EXPECT_TRUE(info.hasValue());
+    EXPECT_TRUE(info.has_value());
     EXPECT_EQ(info->first, "b_out");
     EXPECT_EQ(info->second, "default");
   }
@@ -161,13 +158,13 @@ TEST(Settings, basic) {
   {
     folly::settings::Snapshot sn;
     auto res = sn.getAsString("follytest_public_flag_to_a");
-    EXPECT_TRUE(res.hasValue());
+    EXPECT_TRUE(res.has_value());
     EXPECT_EQ(res->first, "200");
     EXPECT_EQ(res->second, "remote_set");
   }
   {
     auto meta = folly::settings::getSettingsMeta("follytest_public_flag_to_a");
-    EXPECT_TRUE(meta.hasValue());
+    EXPECT_TRUE(meta.has_value());
     const auto& md = meta.value();
     EXPECT_EQ(md.project, "follytest");
     EXPECT_EQ(md.name, "public_flag_to_a");
@@ -176,7 +173,7 @@ TEST(Settings, basic) {
   }
   {
     auto meta = folly::settings::getSettingsMeta("follytest_some_flag");
-    EXPECT_TRUE(meta.hasValue());
+    EXPECT_TRUE(meta.has_value());
     const auto& md = meta.value();
     EXPECT_EQ(md.project, "follytest");
     EXPECT_EQ(md.name, "some_flag");
@@ -186,7 +183,7 @@ TEST(Settings, basic) {
   {
     folly::settings::Snapshot sn;
     auto res = sn.getAsString("follytest_nonexisting");
-    EXPECT_FALSE(res.hasValue());
+    EXPECT_FALSE(res.has_value());
   }
   {
     folly::settings::Snapshot sn;
@@ -199,7 +196,7 @@ TEST(Settings, basic) {
   {
     folly::settings::Snapshot sn;
     auto res = sn.getAsString("follytest_public_flag_to_a");
-    EXPECT_TRUE(res.hasValue());
+    EXPECT_TRUE(res.has_value());
     EXPECT_EQ(res->first, "300");
     EXPECT_EQ(res->second, "from_string");
   }
@@ -446,4 +443,50 @@ TEST(Settings, snapshot) {
         a_ns::FOLLY_SETTING(follytest, public_flag_to_a).value(snapshot_2),
         123);
   }
+}
+
+TEST(SettingsTest, callback) {
+  size_t callbackInvocations = 0;
+  std::string lastCallbackValue;
+
+  EXPECT_EQ(*some_ns::FOLLY_SETTING(follytest, some_flag), "default");
+  {
+    auto handle = some_ns::FOLLY_SETTING(follytest, some_flag)
+                      .addCallback([&](const auto& contents) {
+                        ++callbackInvocations;
+                        lastCallbackValue = contents.value;
+                      });
+
+    some_ns::FOLLY_SETTING(follytest, some_flag).set("a");
+    EXPECT_EQ(callbackInvocations, 1);
+    EXPECT_EQ(lastCallbackValue, "a");
+
+    size_t secondCallbackInvocations = 0;
+    // Test adding multiple callbacks and letting the handle go out of scope
+    {
+      auto secondHandle = some_ns::FOLLY_SETTING(follytest, some_flag)
+                              .addCallback([&](const auto& /* contents */) {
+                                ++secondCallbackInvocations;
+                              });
+      some_ns::FOLLY_SETTING(follytest, some_flag).set("b");
+      EXPECT_EQ(callbackInvocations, 2);
+      EXPECT_EQ(lastCallbackValue, "b");
+      EXPECT_EQ(secondCallbackInvocations, 1);
+    }
+
+    some_ns::FOLLY_SETTING(follytest, some_flag).set("c");
+    EXPECT_EQ(callbackInvocations, 3);
+    EXPECT_EQ(lastCallbackValue, "c");
+    // Second callback no longer invoked
+    EXPECT_EQ(secondCallbackInvocations, 1);
+
+    auto movedHandle = std::move(handle);
+    some_ns::FOLLY_SETTING(follytest, some_flag).set("d");
+    EXPECT_EQ(callbackInvocations, 4);
+    EXPECT_EQ(lastCallbackValue, "d");
+  }
+  // Main callback no longer invoked
+  some_ns::FOLLY_SETTING(follytest, some_flag).set("e");
+  EXPECT_EQ(callbackInvocations, 4);
+  EXPECT_EQ(lastCallbackValue, "d");
 }

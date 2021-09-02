@@ -24,6 +24,10 @@
 #include <typeinfo>
 #include <vector>
 
+#include <folly/portability/Config.h>
+
+#if FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF
+
 namespace folly {
 namespace exception_tracer {
 
@@ -36,9 +40,7 @@ struct ExceptionInfo {
 };
 
 void printExceptionInfo(
-    std::ostream& out,
-    const ExceptionInfo& info,
-    int options);
+    std::ostream& out, const ExceptionInfo& info, int options);
 std::ostream& operator<<(std::ostream& out, const ExceptionInfo& info);
 
 /**
@@ -54,3 +56,5 @@ void installHandlers();
 
 } // namespace exception_tracer
 } // namespace folly
+
+#endif // FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF

@@ -16,16 +16,15 @@
 
 #include <folly/experimental/ThreadedRepeatingFunctionRunner.h>
 
-#include <folly/portability/GTest.h>
 #include <atomic>
+
+#include <folly/portability/GTest.h>
 
 using namespace std;
 
 struct Foo {
   explicit Foo(std::atomic<int>& d) : data(d) {}
-  ~Foo() {
-    runner_.stop();
-  }
+  ~Foo() { runner_.stop(); }
 
   void start() {
     runner_.add("Foo", [this]() {

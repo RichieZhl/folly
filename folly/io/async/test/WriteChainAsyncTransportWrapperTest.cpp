@@ -15,27 +15,26 @@
  */
 
 #include <folly/io/async/WriteChainAsyncTransportWrapper.h>
+
 #include <folly/io/async/AsyncTransport.h>
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
 
-using namespace testing;
 using testing::_;
 
 namespace folly {
 namespace test {
 
 class TestWriteChainAsyncTransportWrapper
-    : public WriteChainAsyncTransportWrapper<folly::AsyncTransportWrapper> {
+    : public WriteChainAsyncTransportWrapper<folly::AsyncTransport> {
  public:
   TestWriteChainAsyncTransportWrapper()
-      : WriteChainAsyncTransportWrapper<folly::AsyncTransportWrapper>(nullptr) {
-  }
+      : WriteChainAsyncTransportWrapper<folly::AsyncTransport>(nullptr) {}
 
   MOCK_METHOD3(
       writeChain,
       void(
-          folly::AsyncTransportWrapper::WriteCallback*,
+          folly::AsyncTransport::WriteCallback*,
           std::shared_ptr<folly::IOBuf>,
           folly::WriteFlags));
 

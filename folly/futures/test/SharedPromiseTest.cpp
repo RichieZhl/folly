@@ -15,6 +15,7 @@
  */
 
 #include <folly/futures/SharedPromise.h>
+
 #include <folly/portability/GTest.h>
 
 using namespace folly;
@@ -155,4 +156,13 @@ TEST(SharedPromise, ConstMethods) {
   p.setValue(42);
   EXPECT_TRUE(fut.isReady());
   EXPECT_EQ(42, std::move(fut).get());
+}
+
+TEST(SharedPromise, InterruptHandlerSetsException) {
+  folly::SharedPromise<int> p;
+  p.setInterruptHandler([&](auto&& ew) { p.setException(ew); });
+  auto f = p.getSemiFuture();
+  f.cancel();
+  ASSERT_TRUE(f.isReady());
+  EXPECT_THROW(std::move(f).get(), FutureCancellation);
 }

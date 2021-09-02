@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#if FOLLY_HAS_COROUTINES
+
 namespace folly {
 namespace coro {
 
@@ -27,8 +29,6 @@ AsyncGenerator<CallbackRecord<Reference>, CallbackRecord<Value>> materialize(
     while (auto item = co_await source.next()) {
       co_yield EventType{callback_record_value, *std::move(item)};
     }
-  } catch (const std::exception& e) {
-    ex = folly::exception_wrapper{std::current_exception(), e};
   } catch (...) {
     ex = folly::exception_wrapper{std::current_exception()};
   }
@@ -42,3 +42,5 @@ AsyncGenerator<CallbackRecord<Reference>, CallbackRecord<Value>> materialize(
 
 } // namespace coro
 } // namespace folly
+
+#endif // FOLLY_HAS_COROUTINES

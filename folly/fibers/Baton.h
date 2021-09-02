@@ -20,11 +20,8 @@
 
 #include <folly/Portability.h>
 #include <folly/detail/Futex.h>
+#include <folly/experimental/coro/Coroutine.h>
 #include <folly/io/async/HHWheelTimer.h>
-
-#if FOLLY_HAS_COROUTINES
-#include <experimental/coroutine>
-#endif
 
 namespace folly {
 namespace fibers {
@@ -119,14 +116,13 @@ class Baton {
    */
   template <typename Rep, typename Period, typename F>
   bool try_wait_for(
-      const std::chrono::duration<Rep, Period>& timeout,
-      F&& mainContextFunc);
+      const std::chrono::duration<Rep, Period>& timeout, F&& mainContextFunc);
 
   /**
    * Puts active fiber to sleep. Returns when post is called or the deadline
    * expires.
    *
-   * @param timeout Baton will be automatically awaken if deadline expires
+   * @param deadline Baton will be automatically awaken if deadline expires
    *
    * @return true if was posted, false if timeout expired
    */
@@ -140,7 +136,7 @@ class Baton {
    * Puts active fiber to sleep. Returns when post is called or the deadline
    * expires.
    *
-   * @param timeout Baton will be automatically awaken if deadline expires
+   * @param deadline Baton will be automatically awaken if deadline expires
    * @param mainContextFunc this function is immediately executed on the main
    *        context.
    *
@@ -155,7 +151,7 @@ class Baton {
    * Puts active fiber to sleep. Returns when post is called or the deadline
    * expires.
    *
-   * @param timeout Baton will be automatically awaken if deadline expires
+   * @param deadline Baton will be automatically awaken if deadline expires
    * @param mainContextFunc this function is immediately executed on the main
    *        context.
    *
@@ -175,8 +171,7 @@ class Baton {
   /// Alias to try_wait_for. Deprecated.
   template <typename Rep, typename Period, typename F>
   bool timed_wait(
-      const std::chrono::duration<Rep, Period>& timeout,
-      F&& mainContextFunc) {
+      const std::chrono::duration<Rep, Period>& timeout, F&& mainContextFunc) {
     return try_wait_for(timeout, static_cast<F&&>(mainContextFunc));
   }
 
@@ -216,7 +211,7 @@ class Baton {
    * scheduleTimeout() may only be called once prior to the end of the
    * associated Baton's life.
    */
-  class TimeoutHandler final : private HHWheelTimer::Callback {
+  class TimeoutHandler final : public HHWheelTimer::Callback {
    public:
     void scheduleTimeout(std::chrono::milliseconds timeout);
 
@@ -275,20 +270,18 @@ class BatonAwaitableWaiter : public Baton::Waiter {
     h_();
   }
 
-  bool await_ready() const {
-    return baton_.ready();
-  }
+  bool await_ready() const { return baton_.ready(); }
 
   void await_resume() {}
 
-  void await_suspend(std::experimental::coroutine_handle<> h) {
+  void await_suspend(coro::coroutine_handle<> h) {
     assert(!h_);
     h_ = std::move(h);
     baton_.setWaiter(*this);
   }
 
  private:
-  std::experimental::coroutine_handle<> h_;
+  coro::coroutine_handle<> h_;
   Baton& baton_;
 };
 } // namespace detail

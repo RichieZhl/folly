@@ -29,6 +29,10 @@
 #include <folly/experimental/exception_tracer/StackTrace.h>
 #include <folly/experimental/symbolizer/Symbolizer.h>
 
+#if FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF
+
+#if defined(__GLIBCXX__)
+
 using namespace folly::exception_tracer;
 
 namespace {
@@ -134,11 +138,13 @@ void throwHandler(void*, std::type_info* exType, void (**)(void*)) noexcept {
 }
 
 struct Initializer {
-  Initializer() {
-    registerCxaThrowCallback(throwHandler);
-  }
+  Initializer() { registerCxaThrowCallback(throwHandler); }
 };
 
 Initializer initializer;
 
 } // namespace
+
+#endif // defined(__GLIBCXX__)
+
+#endif // FOLLY_HAVE_ELF && FOLLY_HAVE_DWARF

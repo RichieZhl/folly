@@ -22,9 +22,6 @@
 #include <folly/logging/LoggerDB.h>
 #include <folly/system/ThreadName.h>
 
-using folly::File;
-using folly::StringPiece;
-
 namespace folly {
 
 constexpr size_t AsyncLogWriter::kDefaultMaxBufferSize;
@@ -81,7 +78,7 @@ void AsyncLogWriter::cleanup() {
 
   // If there are still any pending messages, flush them now.
   if (!ioQueue->empty()) {
-    performIO(ioQueue, numDiscarded);
+    performIO(*ioQueue, numDiscarded);
   }
 }
 
@@ -120,7 +117,7 @@ void AsyncLogWriter::flush() {
     messageReady_.notify_one();
 
     // Wait for notification from the I/O thread that it has done work.
-    ioCV_.wait(data.getUniqueLock());
+    ioCV_.wait(data.as_lock());
   }
 }
 
@@ -148,7 +145,7 @@ void AsyncLogWriter::ioThread() {
       ioQueue = data->getCurrentQueue();
       while (ioQueue->empty() && !(data->flags & FLAG_STOP)) {
         // Wait for a message or one of the above flags to be set.
-        messageReady_.wait(data.getUniqueLock());
+        messageReady_.wait(data.as_lock());
       }
 
       if (data->flags & FLAG_STOP) {
@@ -172,7 +169,7 @@ void AsyncLogWriter::ioThread() {
     ioCV_.notify_all();
 
     // Write the log messages now that we have released the lock
-    performIO(ioQueue, numDiscarded);
+    performIO(*ioQueue, numDiscarded);
 
     // clear() empties the vector, but the allocated capacity remains so we can
     // just reuse it without having to re-allocate in most cases.
@@ -222,7 +219,7 @@ void AsyncLogWriter::stopIoThread(
     uint32_t extraFlags) {
   data->flags |= (FLAG_STOP | extraFlags);
   messageReady_.notify_one();
-  ioCV_.wait(data.getUniqueLock(), [&] {
+  ioCV_.wait(data.as_lock(), [&] {
     return bool(data->flags & FLAG_IO_THREAD_STOPPED);
   });
 

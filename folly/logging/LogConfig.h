@@ -38,17 +38,14 @@ class LogConfig {
 
   LogConfig() = default;
   explicit LogConfig(
-      HandlerConfigMap handlerConfigs,
-      CategoryConfigMap catConfigs)
+      HandlerConfigMap handlerConfigs, CategoryConfigMap catConfigs)
       : handlerConfigs_{std::move(handlerConfigs)},
         categoryConfigs_{std::move(catConfigs)} {}
 
   const CategoryConfigMap& getCategoryConfigs() const {
     return categoryConfigs_;
   }
-  const HandlerConfigMap& getHandlerConfigs() const {
-    return handlerConfigs_;
-  }
+  const HandlerConfigMap& getHandlerConfigs() const { return handlerConfigs_; }
 
   bool operator==(const LogConfig& other) const;
   bool operator!=(const LogConfig& other) const;

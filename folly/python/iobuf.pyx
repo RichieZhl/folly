@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from folly.executor cimport get_executor
+from builtins import memoryview as py_memoryview
+from folly.executor cimport get_running_executor
 from cpython cimport Py_buffer
 from weakref import WeakValueDictionary
 from cpython.object cimport Py_LT, Py_LE, Py_EQ, Py_NE, Py_GT, Py_GE
 from cython.operator cimport dereference as deref
-from cython.view cimport memoryview
 
 __cache = WeakValueDictionary()
 __all__ = ['IOBuf']
@@ -29,7 +29,7 @@ cdef unique_ptr[cIOBuf] from_python_buffer(memoryview view):
         raise ValueError("View must be contiguous")
     return move(
         iobuf_from_python(
-            get_executor(),
+            get_running_executor(True),
             <PyObject*>view,
             view.view.buf,
             view.view.len,
@@ -54,6 +54,9 @@ cdef class IOBuf:
         self._hash = None
         __cache[(<unsigned long>self._this, id(self))] = self
 
+    def __dealloc__(self):
+        self._ours.reset()
+
     @staticmethod
     cdef IOBuf create(cIOBuf* this, object parent):
         key = (<unsigned long>this, id(parent))
@@ -64,6 +67,9 @@ cdef class IOBuf:
             inst._parent = parent
             __cache[key] = inst
         return inst
+
+    cdef void cleanup(self):
+        self._ours.reset()
 
     cdef unique_ptr[cIOBuf] c_clone(self):
         return move(self._this.clone())
@@ -129,10 +135,10 @@ cdef class IOBuf:
 
     def __iter__(self):
         "Iterates through the chain of buffers returning a memory view for each"
-        yield memoryview(self, PyBUF_C_CONTIGUOUS)
+        yield py_memoryview(self)
         next = self.next
         while next is not None and next is not self:
-            yield memoryview(next, PyBUF_C_CONTIGUOUS)
+            yield py_memoryview(next)
             next = next.next
 
     def __hash__(self):

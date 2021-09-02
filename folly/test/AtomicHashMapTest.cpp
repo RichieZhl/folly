@@ -139,9 +139,7 @@ struct HashTraits {
     }
     return result;
   }
-  size_t operator()(const char& a) {
-    return static_cast<size_t>(a);
-  }
+  size_t operator()(const char& a) { return static_cast<size_t>(a); }
   size_t operator()(const StringPiece a) {
     size_t result = 0;
     for (const auto& ch : a) {
@@ -329,6 +327,8 @@ class Integer {
  public:
   explicit Integer(KeyT v = 0) : v_(v) {}
 
+  Integer(const Integer&) = default;
+
   Integer& operator=(const Integer& a) {
     static bool throwException_ = false;
     throwException_ = !throwException_;
@@ -339,9 +339,7 @@ class Integer {
     return *this;
   }
 
-  bool operator==(const Integer& a) const {
-    return v_ == a.v_;
-  }
+  bool operator==(const Integer& a) const { return v_ == a.v_; }
 
  private:
   KeyT v_;
@@ -387,7 +385,7 @@ TEST(Ahm, basicErase) {
     EXPECT_TRUE(success);
     EXPECT_EQ(s->size(), numEntries);
 
-    // Delete every key in the map and verify that the key is gone and the the
+    // Delete every key in the map and verify that the key is gone and the
     // size is correct.
     success = true;
     for (size_t i = 0; i < numEntries; ++i) {

@@ -16,9 +16,8 @@
 
 #include <folly/init/Init.h>
 #include <folly/logging/Init.h>
-#include <folly/logging/xlog.h>
-
 #include <folly/logging/example/lib.h>
+#include <folly/logging/xlog.h>
 
 using namespace example;
 
@@ -37,8 +36,8 @@ FOLLY_INIT_LOGGING_CONFIG(
 int main(int argc, char* argv[]) {
   // Using log macros before calling folly::initLogging() will use the default
   // log settings defined by folly::initializeLoggerDB().  The default behavior
-  // is to log WARNING+ messages to stderr.
-  XLOG(INFO) << "log messages less than WARNING will be ignored";
+  // is to log INFO+ messages to stderr.
+  XLOG(DBG) << "log messages less than INFO will be ignored before initLogging";
   XLOG(ERR) << "error messages before initLogging() will be logged to stderr";
 
   // folly::Init() will automatically initialize the logging settings based on

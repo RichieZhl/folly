@@ -14,9 +14,6 @@
  * limitations under the License.
  */
 
-#include <folly/small_vector.h>
-#include <folly/sorted_vector_types.h>
-
 #include <iterator>
 #include <list>
 #include <memory>
@@ -28,6 +25,8 @@
 #include <folly/memory/Malloc.h>
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
+#include <folly/small_vector.h>
+#include <folly/sorted_vector_types.h>
 
 using folly::sorted_vector_map;
 using folly::sorted_vector_set;
@@ -36,9 +35,7 @@ namespace {
 
 template <class T>
 struct less_invert {
-  bool operator()(const T& a, const T& b) const {
-    return b < a;
-  }
+  bool operator()(const T& a, const T& b) const { return b < a; }
 };
 
 template <class Container>
@@ -74,9 +71,9 @@ struct CountCopyCtor {
     ++gCount_;
   }
 
-  bool operator<(const CountCopyCtor& o) const {
-    return val_ < o.val_;
-  }
+  CountCopyCtor& operator=(const CountCopyCtor&) = default;
+
+  bool operator<(const CountCopyCtor& o) const { return val_ < o.val_; }
 
   int val_;
   int count_;
@@ -84,6 +81,55 @@ struct CountCopyCtor {
 };
 
 int CountCopyCtor::gCount_ = 0;
+
+struct KeyCopiedException : public std::exception {};
+/**
+ * Key that may throw on copy when throwOnCopy is set, but never on move.
+ * Use clone() to copy without throwing.
+ */
+struct KeyThatThrowsOnCopies {
+  int32_t key{};
+  bool throwOnCopy{};
+
+  KeyThatThrowsOnCopies() {}
+
+  /* implicit */ KeyThatThrowsOnCopies(int32_t key) noexcept
+      : key(key), throwOnCopy(false) {}
+  KeyThatThrowsOnCopies(int32_t key, bool throwOnCopy) noexcept
+      : key(key), throwOnCopy(throwOnCopy) {}
+
+  ~KeyThatThrowsOnCopies() noexcept {}
+
+  KeyThatThrowsOnCopies(KeyThatThrowsOnCopies const& other)
+      : key(other.key), throwOnCopy(other.throwOnCopy) {
+    if (throwOnCopy) {
+      throw KeyCopiedException{};
+    }
+  }
+
+  KeyThatThrowsOnCopies(KeyThatThrowsOnCopies&& other) noexcept = default;
+
+  KeyThatThrowsOnCopies& operator=(KeyThatThrowsOnCopies const& other) {
+    key = other.key;
+    throwOnCopy = other.throwOnCopy;
+    if (throwOnCopy) {
+      throw KeyCopiedException{};
+    }
+    return *this;
+  }
+
+  KeyThatThrowsOnCopies& operator=(KeyThatThrowsOnCopies&& other) noexcept =
+      default;
+
+  bool operator<(const KeyThatThrowsOnCopies& other) const {
+    return key < other.key;
+  }
+};
+
+static_assert(
+    std::is_nothrow_move_constructible<KeyThatThrowsOnCopies>::value &&
+        std::is_nothrow_move_assignable<KeyThatThrowsOnCopies>::value,
+    "non-noexcept move-constructible or move-assignable");
 
 } // namespace
 
@@ -142,6 +188,7 @@ TEST(SortedVectorTypes, SimpleSetTest) {
   EXPECT_TRUE(range.second != cs2.end());
   EXPECT_TRUE(cs2.count(32) == 1);
   EXPECT_FALSE(cs2.find(32) == cs2.end());
+  EXPECT_TRUE(cs2.contains(32));
 
   // Bad insert hint.
   s2.insert(s2.begin() + 3, 33);
@@ -154,6 +201,7 @@ TEST(SortedVectorTypes, SimpleSetTest) {
   it = s2.find(32);
   EXPECT_FALSE(it == s2.end());
   s2.erase(it);
+  EXPECT_FALSE(cs2.contains(32));
   EXPECT_TRUE(s2.size() == oldSz);
   check_invariant(s2);
 
@@ -209,6 +257,13 @@ TEST(SortedVectorTypes, TransparentSetTest) {
   EXPECT_EQ(1, s.count(world));
   EXPECT_EQ(0, s.count(zebra));
 
+  // contains
+  EXPECT_FALSE(s.contains(buddy));
+  EXPECT_TRUE(s.contains(hello));
+  EXPECT_FALSE(s.contains(stake));
+  EXPECT_TRUE(s.contains(world));
+  EXPECT_FALSE(s.contains(zebra));
+
   // lower_bound
   EXPECT_TRUE(s.find(hello) == s.lower_bound(buddy));
   EXPECT_TRUE(s.find(hello) == s.lower_bound(hello));
@@ -259,8 +314,10 @@ TEST(SortedVectorTypes, SimpleMapTest) {
   EXPECT_TRUE(m.count(32) == 1);
   EXPECT_DOUBLE_EQ(100.0, m.at(32));
   EXPECT_FALSE(m.find(32) == m.end());
+  EXPECT_TRUE(m.contains(32));
   m.erase(32);
   EXPECT_TRUE(m.find(32) == m.end());
+  EXPECT_FALSE(m.contains(32));
   check_invariant(m);
   EXPECT_THROW(m.at(32), std::out_of_range);
 
@@ -725,9 +782,7 @@ TEST(SortedVectorTypes, TestBulkInsertionUncopyableTypes) {
 struct Movable {
   int x_;
   explicit Movable(int x) : x_(x) {}
-  Movable(const Movable&) {
-    ADD_FAILURE() << "Copy ctor should not be called";
-  }
+  Movable(const Movable&) { ADD_FAILURE() << "Copy ctor should not be called"; }
   Movable& operator=(const Movable&) {
     ADD_FAILURE() << "Copy assignment should not be called";
     return *this;
@@ -862,6 +917,39 @@ TEST(SortedVectorTypes, TestEmplaceHint) {
   }
 }
 
+TEST(SortedVectorTypes, TestExceptionSafety) {
+  std::initializer_list<KeyThatThrowsOnCopies> const sortedUnique = {
+      0, 1, 4, 7, 9, 11, 15};
+  sorted_vector_set<KeyThatThrowsOnCopies> set = {sortedUnique};
+  EXPECT_EQ(set.size(), 7);
+
+  // Verify that we successfully insert when no exceptions are thrown.
+  KeyThatThrowsOnCopies key1(96, false);
+  auto hint1 = set.find(96);
+  set.insert(hint1, key1);
+  EXPECT_EQ(set.size(), 8);
+
+  // Verify that we don't add a key at the end if copying throws
+  KeyThatThrowsOnCopies key2(99, true);
+  auto hint2 = set.find(99);
+  try {
+    set.insert(hint2, key2);
+  } catch (const KeyCopiedException&) {
+    // swallow
+  }
+  EXPECT_EQ(set.size(), 8);
+
+  // Verify that we don't add a key in the middle if copying throws
+  KeyThatThrowsOnCopies key3(47, true);
+  auto hint3 = set.find(47);
+  try {
+    set.insert(hint3, key3);
+  } catch (const KeyCopiedException&) {
+    // swallow
+  }
+  EXPECT_EQ(set.size(), 8);
+}
+
 #if FOLLY_HAS_MEMORY_RESOURCE
 
 using folly::detail::std_pmr::memory_resource;
@@ -877,9 +965,7 @@ struct test_resource : public memory_resource {
   }
 
   void do_deallocate(
-      void* p,
-      size_t /* bytes */,
-      size_t /* alignment */) noexcept override {
+      void* p, size_t /* bytes */, size_t /* alignment */) noexcept override {
     free(p);
   }
 
