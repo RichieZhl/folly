@@ -22,7 +22,6 @@
 #include <folly/Conv.h>
 #include <folly/Format.h>
 #include <folly/Likely.h>
-#include <folly/Portability.h>
 #include <folly/detail/Iterators.h>
 #include <folly/lang/Exception.h>
 
@@ -88,41 +87,38 @@ struct hash<::folly::dynamic> {
 } // namespace std
 
 //////////////////////////////////////////////////////////////////////
-/* clang-format off */
+
 // This is a higher-order preprocessor macro to aid going from runtime
 // types to the compile time type system.
-
-#define FB_DYNAMIC_APPLY(type, apply)                                             \
-  do {                                                                            \
-    FOLLY_PUSH_WARNING FOLLY_CLANG_DISABLE_WARNING("-Wcovered-switch-default")    \
-    switch ((type)) {                                                             \
-      case NULLT:                                                                 \
-        apply(std::nullptr_t);                                                    \
-        break;                                                                    \
-      case ARRAY:                                                                 \
-        apply(Array);                                                             \
-        break;                                                                    \
-      case BOOL:                                                                  \
-        apply(bool);                                                              \
-        break;                                                                    \
-      case DOUBLE:                                                                \
-        apply(double);                                                            \
-        break;                                                                    \
-      case INT64:                                                                 \
-        apply(int64_t);                                                           \
-        break;                                                                    \
-      case OBJECT:                                                                \
-        apply(ObjectImpl);                                                        \
-        break;                                                                    \
-      case STRING:                                                                \
-        apply(std::string);                                                       \
-        break;                                                                    \
-      default:                                                                    \
-        abort();                                                                  \
-    }                                                                             \
-    FOLLY_POP_WARNING                                                             \
+#define FB_DYNAMIC_APPLY(type, apply) \
+  do {                                \
+    switch ((type)) {                 \
+      case NULLT:                     \
+        apply(std::nullptr_t);        \
+        break;                        \
+      case ARRAY:                     \
+        apply(Array);                 \
+        break;                        \
+      case BOOL:                      \
+        apply(bool);                  \
+        break;                        \
+      case DOUBLE:                    \
+        apply(double);                \
+        break;                        \
+      case INT64:                     \
+        apply(int64_t);               \
+        break;                        \
+      case OBJECT:                    \
+        apply(ObjectImpl);            \
+        break;                        \
+      case STRING:                    \
+        apply(std::string);           \
+        break;                        \
+      default:                        \
+        abort();                      \
+    }                                 \
   } while (0)
-/* clang-format on */
+
 //////////////////////////////////////////////////////////////////////
 
 namespace folly {
@@ -1002,8 +998,6 @@ FOLLY_DYNAMIC_DEC_TYPEINFO(dynamic::ObjectImpl, dynamic::OBJECT)
 
 template <class T>
 T dynamic::asImpl() const {
-  FOLLY_PUSH_WARNING
-  FOLLY_CLANG_DISABLE_WARNING("-Wcovered-switch-default")
   switch (type()) {
     case INT64:
       return to<T>(*get_nothrow<int64_t>());
@@ -1019,7 +1013,6 @@ T dynamic::asImpl() const {
     default:
       throw_exception<TypeError>("int/double/bool/string", type());
   }
-  FOLLY_POP_WARNING
 }
 
 // Return a T* to our type, or null if we're not that type.

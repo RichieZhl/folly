@@ -97,11 +97,11 @@ class DebugWipeFinder(object):
         try:
             fd, pypath, (_, _, kind) = imp.find_module(basename, path)
         except Exception:
-            # Maybe it's a top level module
-            try:
-                fd, pypath, (_, _, kind) = imp.find_module(basename, None)
-            except Exception:
-                return None
+            # Finding without hooks using the imp module failed. One reason
+            # could be that there is a zip file on sys.path. The imp module
+            # does not support loading from there. Leave finding this module to
+            # the others finders in sys.meta_path.
+            return None
 
         if hasattr(fd, "close"):
             fd.close()
@@ -485,7 +485,7 @@ class Loader(object):
         return loader.suiteClass(suites)
 
 
-_COVERAGE_INI = '''\
+_COVERAGE_INI = """\
 [report]
 exclude_lines =
     pragma: no cover
@@ -495,7 +495,7 @@ exclude_lines =
     pragma:.*no${PY_IMPL}${PY_MAJOR}
     pragma:.*nopy${PY_MAJOR}
     pragma:.*nopy${PY_MAJOR}${PY_MINOR}
-'''
+"""
 
 
 class MainProgram(object):
@@ -734,7 +734,7 @@ class MainProgram(object):
         if not self.options.collect_coverage:
             return
 
-        with tempfile.NamedTemporaryFile('w', delete=False) as coverage_ini:
+        with tempfile.NamedTemporaryFile("w", delete=False) as coverage_ini:
             coverage_ini.write(_COVERAGE_INI)
             self._coverage_ini_path = coverage_ini.name
 

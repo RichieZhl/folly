@@ -19,6 +19,8 @@
 #include <atomic>
 #include <memory>
 
+#include <folly/portability/GFlags.h>
+
 ///
 /// Forward declatations and implicit documentation of all hazptr
 /// top-level classes, functions, macros, default values, and globals.
@@ -30,6 +32,8 @@
 #else
 #define FOLLY_HAZPTR_THR_LOCAL true
 #endif
+
+DECLARE_bool(folly_hazptr_use_executor);
 
 namespace folly {
 
@@ -184,9 +188,6 @@ void hazard_pointer_clean_up(
 
 /** Global default domain defined in Hazptr.cpp */
 extern hazptr_domain<std::atomic> default_domain;
-
-/** Defined in Hazptr.cpp */
-bool hazptr_use_executor();
 
 ///
 /// Classes related to hazard pointer holders.

@@ -374,13 +374,7 @@ class hazptr_obj_cohort {
         (*(obj->reclaim()))(obj, children);
         obj = next;
       }
-      if (!children.empty()) {
-        if (active()) {
-          hazptr_domain_push_list<Atom>(children);
-        } else {
-          obj = children.head();
-        }
-      }
+      obj = children.head();
     }
   }
 

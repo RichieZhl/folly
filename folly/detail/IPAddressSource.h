@@ -26,7 +26,7 @@
 
 #include <glog/logging.h>
 
-#include <fmt/fmt/core.h>
+#include <fmt/core.h>
 #include <folly/detail/IPAddress.h>
 
 // BSDish platforms don't provide standard access to s6_addr16

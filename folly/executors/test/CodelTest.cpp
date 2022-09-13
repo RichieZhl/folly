@@ -19,10 +19,7 @@
 #include <chrono>
 #include <thread>
 
-#include <folly/portability/GFlags.h>
 #include <folly/portability/GTest.h>
-
-DECLARE_int32(codel_target_delay);
 
 using std::chrono::milliseconds;
 using std::this_thread::sleep_for;

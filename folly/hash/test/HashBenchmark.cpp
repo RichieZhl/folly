@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-#include <fmt/fmt/core.h>
+#include <fmt/core.h>
 #include <glog/logging.h>
 
 #include <folly/Benchmark.h>

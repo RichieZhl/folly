@@ -39,7 +39,7 @@ if (NOT MSVC_FAVORED_ARCHITECTURE STREQUAL "blend" AND NOT MSVC_FAVORED_ARCHITEC
   message(FATAL_ERROR "MSVC_FAVORED_ARCHITECTURE must be set to one of exactly, 'blend', 'AMD64', 'INTEL64', or 'ATOM'! Got '${MSVC_FAVORED_ARCHITECTURE}' instead!")
 endif()
 
-set(MSVC_LANGUAGE_VERSION "c++latest" CACHE STRING "One of 'c++17', or 'c++latest'. This determines which version of C++ to compile as.")
+set(MSVC_LANGUAGE_VERSION "c++17" CACHE STRING "One of 'c++17', or 'c++latest'. This determines which version of C++ to compile as.")
 set_property(
   CACHE MSVC_LANGUAGE_VERSION
   PROPERTY STRINGS
@@ -85,6 +85,22 @@ endif()
 foreach(flag_var CMAKE_C_FLAGS_DEBUG CMAKE_CXX_FLAGS_DEBUG)
   if (${flag_var} MATCHES "/Ob0")
     string(REGEX REPLACE "/Ob0" "" ${flag_var} "${${flag_var}}")
+  endif()
+endforeach()
+
+# When building with Ninja, or with /MP enabled, there is the potential
+# for multiple processes to need to lock the same pdb file.
+# The /FS option (which is implicitly enabled by /MP) is widely believed
+# to be the solution for this, but even with /FS enabled the problem can
+# still randomly occur.
+# https://stackoverflow.com/a/58020501/149111 suggests that /Z7 should be
+# used; rather than placing the debug info into a .pdb file it embeds it
+# into the object files in a similar way to gcc/clang which should reduce
+# contention and potentially make the build faster... but at the cost of
+# larger object files
+foreach(flag_var CMAKE_C_FLAGS_DEBUG CMAKE_CXX_FLAGS_DEBUG)
+  if (${flag_var} MATCHES "/Zi")
+    string(REGEX REPLACE "/Zi" "/Z7" ${flag_var} "${${flag_var}}")
   endif()
 endforeach()
 

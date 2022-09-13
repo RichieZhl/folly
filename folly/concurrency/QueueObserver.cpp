@@ -14,17 +14,20 @@
  * limitations under the License.
  */
 
-#pragma once
+#include <folly/concurrency/QueueObserver.h>
 
-#include <folly/CancellationToken.h>
+namespace {
+std::unique_ptr<folly::QueueObserverFactory>
+make_queue_observer_factory_fallback(const std::string&, size_t) noexcept {
+  return std::unique_ptr<folly::QueueObserverFactory>();
+}
+} // namespace
 
 namespace folly {
-
-/**
- * Returns a CancellationToken that can be used to schedule callbacks. The
- * CancellationToken is cancelled when any of SIGTERM and SIGINT
- * signal is received.
- */
-CancellationToken getTerminateCancellationToken();
-
+/* static */ std::unique_ptr<QueueObserverFactory> QueueObserverFactory::make(
+    const std::string& context, size_t numPriorities) {
+  auto f = make_queue_observer_factory ? make_queue_observer_factory
+                                       : make_queue_observer_factory_fallback;
+  return f(context, numPriorities);
+}
 } // namespace folly

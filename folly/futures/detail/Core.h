@@ -193,12 +193,9 @@ class InterruptHandler {
 };
 
 template <class F>
-class InterruptHandlerImpl final : public InterruptHandler {
+class InterruptHandlerImpl : public InterruptHandler {
  public:
-  template <typename R>
-  explicit InterruptHandlerImpl(R&& f) noexcept(
-      noexcept(F(static_cast<R&&>(f))))
-      : f_(static_cast<R&&>(f)) {}
+  explicit InterruptHandlerImpl(F f) : f_(std::move(f)) {}
 
   void handle(const folly::exception_wrapper& ew) const override { f_(ew); }
 
@@ -439,12 +436,11 @@ class CoreBase {
     if (hasResult()) {
       return;
     }
-    handler_type* handler = nullptr;
     auto interrupt = interrupt_.load(std::memory_order_acquire);
     switch (interrupt & InterruptMask) {
       case InterruptInitial: { // store the handler
         assert(!interrupt);
-        handler = new handler_type(static_cast<F&&>(fn));
+        auto handler = new handler_type(static_cast<F&&>(fn));
         auto exchanged = folly::atomic_compare_exchange_strong_explicit(
             &interrupt_,
             &interrupt,
@@ -455,6 +451,7 @@ class CoreBase {
           return;
         }
         // lost the race!
+        delete handler;
         if (interrupt & InterruptHasHandler) {
           terminate_with<std::logic_error>("set-interrupt-handler race");
         }
@@ -467,16 +464,9 @@ class CoreBase {
         if (!exchanged) {
           terminate_with<std::logic_error>("set-interrupt-handler race");
         }
-        auto pointer = interrupt & ~InterruptMask;
-        auto object = reinterpret_cast<exception_wrapper*>(pointer);
-        if (handler) {
-          handler->handle(*object);
-          delete handler;
-        } else {
-          // mimic constructing and invoking a handler: 1 copy; non-const invoke
-          auto fn_ = static_cast<F&&>(fn);
-          fn_(as_const(*object));
-        }
+        auto object = reinterpret_cast<exception_wrapper*>(
+            interrupt & ~InterruptHasObject);
+        fn(as_const(*object));
         delete object;
         return;
       }

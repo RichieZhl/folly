@@ -62,12 +62,14 @@ function(add_fbthrift_cpp_library LIB_NAME THRIFT_FILE)
     "${output_dir}/gen-cpp2/${base}_types.h"
     "${output_dir}/gen-cpp2/${base}_types.tcc"
     "${output_dir}/gen-cpp2/${base}_types_custom_protocol.h"
+    "${output_dir}/gen-cpp2/${base}_metadata.h"
   )
   list(APPEND generated_sources
     "${output_dir}/gen-cpp2/${base}_constants.cpp"
     "${output_dir}/gen-cpp2/${base}_data.h"
     "${output_dir}/gen-cpp2/${base}_data.cpp"
     "${output_dir}/gen-cpp2/${base}_types.cpp"
+    "${output_dir}/gen-cpp2/${base}_metadata.cpp"
   )
   foreach(service IN LISTS ARG_SERVICES)
     list(APPEND generated_headers
@@ -125,8 +127,14 @@ function(add_fbthrift_cpp_library LIB_NAME THRIFT_FILE)
   )
 
   # Now emit the library rule to compile the sources
+  if (BUILD_SHARED_LIBS)
+    set(LIB_TYPE SHARED)
+  else ()
+    set(LIB_TYPE STATIC)
+  endif ()
+
   add_library(
-    "${LIB_NAME}" STATIC
+    "${LIB_NAME}" ${LIB_TYPE}
     ${generated_sources}
   )
 

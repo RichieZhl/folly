@@ -23,7 +23,8 @@
 
 using namespace folly;
 using namespace testing;
-using namespace folly::test;
+using namespace folly::tcpinfo;
+using namespace folly::tcpinfo::test;
 
 using us = std::chrono::microseconds;
 
@@ -48,7 +49,7 @@ class TcpInfoTest : public Test {
   }
 
   void setupExpectCallCcInfo(
-      NetworkSocket& s, const folly::TcpInfo::tcp_cc_info& ccInfo) {
+      NetworkSocket& s, const folly::tcpinfo::tcp_cc_info& ccInfo) {
     TcpInfoTestUtil::setupExpectCallCcInfo(mockNetOpsDispatcher_, s, ccInfo);
   }
 
@@ -73,8 +74,8 @@ class TcpInfoTest : public Test {
         })));
   }
 
-  static folly::TcpInfo::tcp_info getTestLatestTcpInfo() {
-    folly::TcpInfo::tcp_info tInfo = {};
+  static folly::tcpinfo::tcp_info getTestLatestTcpInfo() {
+    folly::tcpinfo::tcp_info tInfo = {};
     tInfo.tcpi_state = 1;
     tInfo.tcpi_ca_state = 2;
     tInfo.tcpi_retransmits = 3;
@@ -133,8 +134,8 @@ class TcpInfoTest : public Test {
     return tInfo;
   }
 
-  static folly::detail::tcp_info_legacy getTestLegacyTcpInfo() {
-    folly::detail::tcp_info_legacy tInfo = {};
+  static folly::tcpinfo::tcp_info_legacy getTestLegacyTcpInfo() {
+    folly::tcpinfo::tcp_info_legacy tInfo = {};
     tInfo.tcpi_state = 1;
     tInfo.tcpi_ca_state = 2;
     tInfo.tcpi_retransmits = 3;
@@ -170,8 +171,8 @@ class TcpInfoTest : public Test {
     return tInfo;
   }
 
-  static folly::TcpInfo::tcp_cc_info getTestBbrInfo() {
-    folly::TcpInfo::tcp_cc_info ccInfo = {};
+  static folly::tcpinfo::tcp_cc_info getTestBbrInfo() {
+    folly::tcpinfo::tcp_cc_info ccInfo = {};
     ccInfo.bbr.bbr_bw_lo = 1;
     ccInfo.bbr.bbr_bw_hi = 2;
     ccInfo.bbr.bbr_min_rtt = 3;
@@ -180,8 +181,8 @@ class TcpInfoTest : public Test {
     return ccInfo;
   }
 
-  static folly::TcpInfo::tcp_cc_info getTestVegasInfo() {
-    folly::TcpInfo::tcp_cc_info ccInfo = {};
+  static folly::tcpinfo::tcp_cc_info getTestVegasInfo() {
+    folly::tcpinfo::tcp_cc_info ccInfo = {};
     ccInfo.vegas.tcpv_enabled = 6;
     ccInfo.vegas.tcpv_rttcnt = 7;
     ccInfo.vegas.tcpv_rtt = 8;
@@ -189,8 +190,8 @@ class TcpInfoTest : public Test {
     return ccInfo;
   }
 
-  static folly::TcpInfo::tcp_cc_info getTestDctcpInfo() {
-    folly::TcpInfo::tcp_cc_info ccInfo = {};
+  static folly::tcpinfo::tcp_cc_info getTestDctcpInfo() {
+    folly::tcpinfo::tcp_cc_info ccInfo = {};
     ccInfo.dctcp.dctcp_enabled = 10;
     ccInfo.dctcp.dctcp_ce_state = 11;
     ccInfo.dctcp.dctcp_alpha = 12;
@@ -208,11 +209,11 @@ class TcpInfoTest : public Test {
     EXPECT_FALSE(wrappedTcpInfo.cwndInPackets().has_value());
     EXPECT_FALSE(
         wrappedTcpInfo
-            .getFieldAsOptUInt64(&folly::TcpInfo::tcp_info::tcpi_total_retrans)
+            .getFieldAsOptUInt64(&folly::tcpinfo::tcp_info::tcpi_total_retrans)
             .has_value());
     EXPECT_FALSE(
         wrappedTcpInfo
-            .getFieldAsOptUInt64(&folly::TcpInfo::tcp_info::tcpi_snd_cwnd)
+            .getFieldAsOptUInt64(&folly::tcpinfo::tcp_info::tcpi_snd_cwnd)
             .has_value());
   }
 
@@ -256,13 +257,13 @@ class TcpInfoTest : public Test {
     EXPECT_EQ(
         controlTcpInfo.tcpi_snd_cwnd,
         wrappedTcpInfo.getFieldAsOptUInt64(
-            &folly::TcpInfo::tcp_info::tcpi_snd_cwnd));
+            &folly::tcpinfo::tcp_info::tcpi_snd_cwnd));
 
     // try using getTcpInfoFieldAsOpt to get one of the newer fields
     // this field should _not_ be available in legacy
     EXPECT_FALSE(
         wrappedTcpInfo
-            .getFieldAsOptUInt64(&folly::TcpInfo::tcp_info::tcpi_delivery_rate)
+            .getFieldAsOptUInt64(&folly::tcpinfo::tcp_info::tcpi_delivery_rate)
             .hasValue());
   }
 
@@ -317,7 +318,7 @@ class TcpInfoTest : public Test {
     EXPECT_EQ(
         controlTcpInfo.tcpi_delivery_rate,
         wrappedTcpInfo.getFieldAsOptUInt64(
-            &folly::TcpInfo::tcp_info::tcpi_delivery_rate));
+            &folly::tcpinfo::tcp_info::tcpi_delivery_rate));
   }
 
   static void checkNoCcNameType(const TcpInfo& wrappedTcpInfo) {
@@ -330,16 +331,12 @@ class TcpInfoTest : public Test {
     // should get false for all three types
     EXPECT_FALSE(wrappedTcpInfo.bbrCwndGain().has_value());
     EXPECT_FALSE(
-        wrappedTcpInfo
-            .getFieldAsOptUInt64(&folly::TcpInfo::tcp_bbr_info::bbr_pacing_gain)
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcp_bbr_info::bbr_pacing_gain)
             .has_value());
+    EXPECT_FALSE(wrappedTcpInfo.getFieldAsOptUInt64(&tcpvegas_info::tcpv_rtt)
+                     .has_value());
     EXPECT_FALSE(
-        wrappedTcpInfo
-            .getFieldAsOptUInt64(&folly::TcpInfo::tcpvegas_info::tcpv_rtt)
-            .has_value());
-    EXPECT_FALSE(
-        wrappedTcpInfo
-            .getFieldAsOptUInt64(&folly::TcpInfo::tcp_dctcp_info::dctcp_alpha)
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcp_dctcp_info::dctcp_alpha)
             .has_value());
   }
 
@@ -350,8 +347,7 @@ class TcpInfoTest : public Test {
     const auto controlCcInfo = getTestBbrInfo().bbr;
     EXPECT_EQ(
         controlCcInfo.bbr_pacing_gain,
-        wrappedTcpInfo.getFieldAsOptUInt64(
-            &folly::TcpInfo::tcp_bbr_info::bbr_pacing_gain));
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcp_bbr_info::bbr_pacing_gain));
     const uint64_t bbrBwBytesPerSecond =
         (uint64_t(controlCcInfo.bbr_bw_hi) << 32) + controlCcInfo.bbr_bw_lo;
     EXPECT_EQ(bbrBwBytesPerSecond, wrappedTcpInfo.bbrBwBytesPerSecond());
@@ -363,14 +359,12 @@ class TcpInfoTest : public Test {
     // try using getFieldAsOptUInt64 directly to get one of the BBR fields
     EXPECT_EQ(
         controlCcInfo.bbr_pacing_gain,
-        wrappedTcpInfo.getFieldAsOptUInt64(
-            &folly::TcpInfo::tcp_bbr_info::bbr_pacing_gain));
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcp_bbr_info::bbr_pacing_gain));
 
     // no CC info for the other types
-    EXPECT_FALSE(wrappedTcpInfo.getFieldAsOptUInt64(
-        &folly::TcpInfo::tcpvegas_info::tcpv_rtt));
-    EXPECT_FALSE(wrappedTcpInfo.getFieldAsOptUInt64(
-        &folly::TcpInfo::tcp_dctcp_info::dctcp_alpha));
+    EXPECT_FALSE(wrappedTcpInfo.getFieldAsOptUInt64(&tcpvegas_info::tcpv_rtt));
+    EXPECT_FALSE(
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcp_dctcp_info::dctcp_alpha));
   }
 
   static void checkCcFieldsAgainstVegas(const TcpInfo& wrappedTcpInfo) {
@@ -381,18 +375,15 @@ class TcpInfoTest : public Test {
     const auto controlCcInfo = getTestVegasInfo().vegas;
     EXPECT_EQ(
         controlCcInfo.tcpv_rtt,
-        wrappedTcpInfo.getFieldAsOptUInt64(
-            &folly::TcpInfo::tcpvegas_info::tcpv_rtt));
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcpvegas_info::tcpv_rtt));
 
     // no CC info for the other types
     EXPECT_FALSE(wrappedTcpInfo.bbrCwndGain().has_value());
     EXPECT_FALSE(
-        wrappedTcpInfo
-            .getFieldAsOptUInt64(&folly::TcpInfo::tcp_bbr_info::bbr_pacing_gain)
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcp_bbr_info::bbr_pacing_gain)
             .has_value());
     EXPECT_FALSE(
-        wrappedTcpInfo
-            .getFieldAsOptUInt64(&folly::TcpInfo::tcp_dctcp_info::dctcp_alpha)
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcp_dctcp_info::dctcp_alpha)
             .has_value());
   }
 
@@ -424,23 +415,18 @@ class TcpInfoTest : public Test {
     const auto controlCcInfo = getTestDctcpInfo().dctcp;
     EXPECT_EQ(
         controlCcInfo.dctcp_alpha,
-        wrappedTcpInfo.getFieldAsOptUInt64(
-            &folly::TcpInfo::tcp_dctcp_info::dctcp_alpha));
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcp_dctcp_info::dctcp_alpha));
     EXPECT_EQ(
         controlCcInfo.dctcp_enabled,
-        wrappedTcpInfo.getFieldAsOptUInt64(
-            &folly::TcpInfo::tcp_dctcp_info::dctcp_enabled));
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcp_dctcp_info::dctcp_enabled));
 
     // no CC info for the other types
     EXPECT_FALSE(wrappedTcpInfo.bbrCwndGain().has_value());
     EXPECT_FALSE(
-        wrappedTcpInfo
-            .getFieldAsOptUInt64(&folly::TcpInfo::tcp_bbr_info::bbr_pacing_gain)
+        wrappedTcpInfo.getFieldAsOptUInt64(&tcp_bbr_info::bbr_pacing_gain)
             .has_value());
-    EXPECT_FALSE(
-        wrappedTcpInfo
-            .getFieldAsOptUInt64(&folly::TcpInfo::tcpvegas_info::tcpv_rtt)
-            .has_value());
+    EXPECT_FALSE(wrappedTcpInfo.getFieldAsOptUInt64(&tcpvegas_info::tcpv_rtt)
+                     .has_value());
   }
 
   static void checkNoMemoryInfo(const TcpInfo& wrappedTcpInfo) {
@@ -457,7 +443,7 @@ TEST_F(TcpInfoTest, LegacyStruct) {
   NetworkSocket s(0);
   setupExpectCallTcpInfo(s, getTestLegacyTcpInfo());
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = false;
   options.getMemInfo = false;
   auto wrappedTcpInfoExpect =
@@ -477,7 +463,7 @@ TEST_F(TcpInfoTest, LatestStruct) {
   NetworkSocket s(0);
   setupExpectCallTcpInfo(s, getTestLatestTcpInfo());
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = false;
   options.getMemInfo = false;
   auto wrappedTcpInfoExpect =
@@ -499,7 +485,7 @@ TEST_F(TcpInfoTest, LatestStructWithCcInfo) {
   setupExpectCallCcName(s, "bbr");
   setupExpectCallCcInfo(s, getTestBbrInfo());
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = true;
   options.getMemInfo = false;
   auto wrappedTcpInfoExpect = TcpInfo::initFromFd(
@@ -522,7 +508,7 @@ TEST_F(TcpInfoTest, LatestStructWithMemInfo) {
       ExpectCallMemInfoConfig{
           .siocoutq = kTestSiocoutqVal, .siocinq = kTestSiocinqVal});
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = false;
   options.getMemInfo = true;
   auto wrappedTcpInfoExpect = TcpInfo::initFromFd(
@@ -549,7 +535,7 @@ TEST_F(TcpInfoTest, LatestStructWithCcInfoAndMemInfo) {
       ExpectCallMemInfoConfig{
           .siocoutq = kTestSiocoutqVal, .siocinq = kTestSiocinqVal});
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = true;
   options.getMemInfo = true;
   auto wrappedTcpInfoExpect = TcpInfo::initFromFd(
@@ -572,7 +558,7 @@ TEST_F(TcpInfoTest, LatestStructWithCcInfoAndMemInfoUnknownCc) {
       ExpectCallMemInfoConfig{
           .siocoutq = kTestSiocoutqVal, .siocinq = kTestSiocinqVal});
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = true;
   options.getMemInfo = true;
   auto wrappedTcpInfoExpect = TcpInfo::initFromFd(
@@ -595,7 +581,7 @@ TEST_F(TcpInfoTest, LatestStructWithCcInfoAndMemInfoUnknownCc) {
 TEST_F(TcpInfoTest, FailUninitializedSocket) {
   NetworkSocket s;
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = true;
   options.getMemInfo = true;
   auto wrappedTcpInfoExpect = TcpInfo::initFromFd(
@@ -606,7 +592,7 @@ TEST_F(TcpInfoTest, FailUninitializedSocket) {
 TEST_F(TcpInfoTest, FailTcpInfo) {
   NetworkSocket s(0);
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = true;
   options.getMemInfo = true;
   EXPECT_CALL(mockNetOpsDispatcher_, getsockopt(s, IPPROTO_TCP, TCP_INFO, _, _))
@@ -636,7 +622,7 @@ TEST_F(TcpInfoTest, FailCcName) {
           Pointee(Eq(TcpInfo::kLinuxTcpCaNameMax))))
       .WillOnce(Return(-1));
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = true;
   options.getMemInfo = true;
   auto wrappedTcpInfoExpect = TcpInfo::initFromFd(
@@ -674,7 +660,7 @@ TEST_F(TcpInfoTest, FailCcInfo) {
           Pointee(Eq(sizeof(TcpInfo::tcp_cc_info)))))
       .WillOnce(Return(-1));
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = true;
   options.getMemInfo = true;
   auto wrappedTcpInfoExpect = TcpInfo::initFromFd(
@@ -709,7 +695,7 @@ TEST_F(TcpInfoTest, FailSiocoutq) {
         return 0;
       })));
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = true;
   options.getMemInfo = true;
   auto wrappedTcpInfoExpect = TcpInfo::initFromFd(
@@ -740,7 +726,7 @@ TEST_F(TcpInfoTest, FailSiocinq) {
   EXPECT_CALL(mockIoctlDispatcher_, ioctl(s.toFd(), SIOCINQ, testing::_))
       .WillOnce(Return(-1));
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = true;
   options.getMemInfo = true;
   auto wrappedTcpInfoExpect = TcpInfo::initFromFd(
@@ -820,7 +806,7 @@ TEST_P(TcpInfoTestCcParam, FetchAllAndCheck) {
       FAIL();
   }
 
-  TcpInfo::LookupOptions options = {};
+  LookupOptions options = {};
   options.getCcInfo = true;
   options.getMemInfo = true;
   auto wrappedTcpInfoExpect = TcpInfo::initFromFd(

@@ -275,15 +275,13 @@ class BasicDynamicTokenBucket {
       : bucket_(zeroTime) {}
 
   /**
-   * Copy constructor and copy assignment operator.
+   * Copy constructor.
    *
    * Thread-safe. (Copy constructors of derived classes may not be thread-safe
    * however.)
    */
-  BasicDynamicTokenBucket(const BasicDynamicTokenBucket& other) noexcept =
-      default;
-  BasicDynamicTokenBucket& operator=(
-      const BasicDynamicTokenBucket& other) noexcept = default;
+  BasicDynamicTokenBucket(const BasicDynamicTokenBucket& other) noexcept
+      : bucket_(other.bucket_) {}
 
   /**
    * Re-initialize token bucket.

@@ -594,7 +594,7 @@ IOBuf::IOBuf(
       capacity_(capacity),
       flagsAndSharedInfo_(flagsAndSharedInfo) {
   assert(data >= buf);
-  assert(intptr_t(data) + length <= intptr_t(buf) + capacity);
+  assert(data + length <= buf + capacity);
 
   CHECK(!folly::asan_region_is_poisoned(buf, capacity));
 }
@@ -954,7 +954,6 @@ void IOBuf::coalesceAndReallocate(
     current = current->next_;
   } while (current != end);
   assert(remaining == 0);
-  (void)remaining;
 
   // Point at the new buffer
   decrementRefcount();

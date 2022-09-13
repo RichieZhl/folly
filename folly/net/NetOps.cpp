@@ -378,11 +378,9 @@ int recvmmsg(
 #if defined(__XROS__) || defined(__EMSCRIPTEN__)
   throw std::logic_error("Not implemented!");
 #else
-#if !__APPLE__
   if (reinterpret_cast<void*>(::recvmmsg) != nullptr) {
     return wrapSocketFunction<int>(::recvmmsg, s, msgvec, vlen, flags, timeout);
   }
-#endif
   // implement via recvmsg
   for (unsigned int i = 0; i < vlen; i++) {
     ssize_t ret = recvmsg(s, &msgvec[i].msg_hdr, flags);
@@ -458,7 +456,7 @@ ssize_t sendmsg(NetworkSocket socket, const msghdr* message, int flags) {
 
 int sendmmsg(
     NetworkSocket socket, mmsghdr* msgvec, unsigned int vlen, int flags) {
-#if FOLLY_HAVE_SENDMMSG && !__APPLE__
+#if FOLLY_HAVE_SENDMMSG
   return wrapSocketFunction<int>(::sendmmsg, socket, msgvec, vlen, flags);
 #elif defined(__XROS__) || defined(__EMSCRIPTEN__)
   throw std::logic_error("Not implemented!");

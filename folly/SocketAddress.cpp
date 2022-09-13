@@ -31,7 +31,7 @@
 
 #include <boost/functional/hash.hpp>
 
-#include <fmt/fmt/core.h>
+#include <fmt/core.h>
 
 #include <folly/CppAttributes.h>
 #include <folly/Exception.h>

@@ -16,10 +16,10 @@ from .manifest import ManifestParser
 
 
 class Loader(object):
-    """ The loader allows our tests to patch the load operation """
+    """The loader allows our tests to patch the load operation"""
 
     def _list_manifests(self, build_opts):
-        """ Returns a generator that iterates all the available manifests """
+        """Returns a generator that iterates all the available manifests"""
         for (path, _, files) in os.walk(build_opts.manifests_dir):
             for name in files:
                 # skip hidden files
@@ -103,8 +103,8 @@ def patch_loader(namespace, manifests_dir="manifests"):
 
 
 def load_project(build_opts, project_name):
-    """ given the name of a project or a path to a manifest file,
-    load up the ManifestParser instance for it and return it """
+    """given the name of a project or a path to a manifest file,
+    load up the ManifestParser instance for it and return it"""
     return LOADER.load_project(build_opts, project_name)
 
 
@@ -113,7 +113,7 @@ def load_all_manifests(build_opts):
 
 
 class ManifestLoader(object):
-    """ ManifestLoader stores information about project manifest relationships for a
+    """ManifestLoader stores information about project manifest relationships for a
     given set of (build options + platform) configuration.
 
     The ManifestLoader class primarily serves as a location to cache project dependency
@@ -134,6 +134,7 @@ class ManifestLoader(object):
         self._fetcher_overrides = {}
         self._build_dir_overrides = {}
         self._install_dir_overrides = {}
+        self._install_prefix_overrides = {}
 
     def load_manifest(self, name):
         manifest = self.manifests_by_name.get(name)
@@ -158,7 +159,7 @@ class ManifestLoader(object):
         return self.manifests_by_name
 
     def manifests_in_dependency_order(self, manifest=None):
-        """ Compute all dependencies of the specified project.  Returns a list of the
+        """Compute all dependencies of the specified project.  Returns a list of the
         dependencies plus the project itself, in topologically sorted order.
 
         Each entry in the returned list only depends on projects that appear before it
@@ -167,7 +168,7 @@ class ManifestLoader(object):
         If the input manifest is None, the dependencies for all currently loaded
         projects will be computed.  i.e., if you call load_all_manifests() followed by
         manifests_in_dependency_order() this will return a global dependency ordering of
-        all projects.  """
+        all projects."""
         # The list of deps that have been fully processed
         seen = set()
         # The list of deps which have yet to be evaluated.  This
@@ -238,6 +239,9 @@ class ManifestLoader(object):
     def set_project_install_dir(self, project_name, path):
         self._install_dir_overrides[project_name] = path
 
+    def set_project_install_prefix(self, project_name, path):
+        self._install_prefix_overrides[project_name] = path
+
     def create_fetcher(self, manifest):
         override = self._fetcher_overrides.get(manifest.name)
         if override is not None:
@@ -254,12 +258,12 @@ class ManifestLoader(object):
         return h
 
     def _compute_project_hash(self, manifest):
-        """ This recursive function computes a hash for a given manifest.
+        """This recursive function computes a hash for a given manifest.
         The hash takes into account some environmental factors on the
         host machine and includes the hashes of its dependencies.
         No caching of the computation is performed, which is theoretically
         wasteful but the computation is fast enough that it is not required
-        to cache across multiple invocations. """
+        to cache across multiple invocations."""
         ctx = self.ctx_gen.get_context(manifest.name)
 
         hasher = hashlib.sha256()
@@ -267,10 +271,18 @@ class ManifestLoader(object):
         env = {}
         env["install_dir"] = self.build_opts.install_dir
         env["scratch_dir"] = self.build_opts.scratch_dir
+        env["vcvars_path"] = self.build_opts.vcvars_path
         env["os"] = self.build_opts.host_type.ostype
         env["distro"] = self.build_opts.host_type.distro
         env["distro_vers"] = self.build_opts.host_type.distrovers
-        for name in ["CXXFLAGS", "CPPFLAGS", "LDFLAGS", "CXX", "CC"]:
+        for name in [
+            "CXXFLAGS",
+            "CPPFLAGS",
+            "LDFLAGS",
+            "CXX",
+            "CC",
+            "GETDEPS_CMAKE_DEFINES",
+        ]:
             env[name] = os.environ.get(name)
         for tool in ["cc", "c++", "gcc", "g++", "clang", "clang++"]:
             env["tool-%s" % tool] = path_search(os.environ, tool)
@@ -284,7 +296,10 @@ class ManifestLoader(object):
             hasher.update(name.encode("utf-8"))
             value = env.get(name)
             if value is not None:
-                hasher.update(value.encode("utf-8"))
+                try:
+                    hasher.update(value.encode("utf-8"))
+                except AttributeError as exc:
+                    raise AttributeError("name=%r, value=%r: %s" % (name, value, exc))
 
         manifest.update_hash(hasher, ctx)
 
@@ -327,3 +342,13 @@ class ManifestLoader(object):
 
         project_dir_name = self._get_project_dir_name(manifest)
         return os.path.join(self.build_opts.scratch_dir, "build", project_dir_name)
+
+    def get_project_install_prefix(self, manifest):
+        return self._install_prefix_overrides.get(manifest.name)
+
+    def get_project_install_dir_respecting_install_prefix(self, manifest):
+        inst_dir = self.get_project_install_dir(manifest)
+        prefix = self.get_project_install_prefix(manifest)
+        if prefix:
+            return inst_dir + prefix
+        return inst_dir

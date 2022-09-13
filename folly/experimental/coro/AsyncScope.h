@@ -184,19 +184,9 @@ inline folly::SemiFuture<folly::Unit> AsyncScope::cleanup() noexcept {
 // A cancellable version of AsyncScope. Work added to this scope will be
 // provided a cancellation token for cancelling during join. See
 // add() and cancelAndJoinAsync() for more information.
-//
-// Note that Task and AsyncGenerator will ignore the internal cancellation
-// signal if they already have a cancellation token (i.e. if someone has already
-// called co_withCancellation on them.)
-// If you need an external cancellation signal as well, pass that token to this
-// constructor or to add() instead of attaching it to the Awaitable.
 class CancellableAsyncScope {
  public:
-  CancellableAsyncScope() noexcept
-      : cancellationToken_(cancellationSource_.getToken()) {}
-  explicit CancellableAsyncScope(CancellationToken&& token)
-      : cancellationToken_(CancellationToken::merge(
-            cancellationSource_.getToken(), std::move(token))) {}
+  CancellableAsyncScope() noexcept = default;
 
   // Query the number of tasks added to the scope that have not yet completed.
   std::size_t remaining() const noexcept { return scope_.remaining(); }
@@ -204,22 +194,16 @@ class CancellableAsyncScope {
   // Start the specified task/awaitable by co_awaiting it. The awaitable will be
   // provided a cancellation token to respond to cancelAndJoinAsync() in the
   // future.
-  // An additional cancellation token may be passed in to apply to the
-  // awaitable; it will be merged with the internal token.
   //
   // Note that cancellation is cooperative, your task must handle cancellation
   // in order to have any effect.
   //
   // See the documentation on AsyncScope::add.
   template <typename Awaitable>
-  void add(
-      Awaitable&& awaitable,
-      std::optional<CancellationToken> token = std::nullopt,
-      void* returnAddress = nullptr) {
+  void add(Awaitable&& awaitable, void* returnAddress = nullptr) {
     scope_.add(
         co_withCancellation(
-            token ? CancellationToken::merge(*token, cancellationToken_)
-                  : cancellationToken_,
+            cancellationSource_.getToken(),
             static_cast<Awaitable&&>(awaitable)),
         returnAddress ? returnAddress : FOLLY_ASYNC_STACK_RETURN_ADDRESS());
   }
@@ -249,7 +233,6 @@ class CancellableAsyncScope {
 
  private:
   folly::CancellationSource cancellationSource_;
-  CancellationToken cancellationToken_;
   AsyncScope scope_;
 };
 

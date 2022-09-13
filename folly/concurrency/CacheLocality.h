@@ -32,7 +32,6 @@
 #include <folly/Likely.h>
 #include <folly/Memory.h>
 #include <folly/Portability.h>
-#include <folly/detail/StaticSingletonManager.h>
 #include <folly/lang/Align.h>
 #include <folly/lang/Exception.h>
 
@@ -259,9 +258,7 @@ struct AccessSpreader : private detail::AccessSpreaderBase {
  private:
   struct GlobalState : detail::AccessSpreaderBase::GlobalState {};
   static_assert(
-      is_constexpr_default_constructible_v<GlobalState> &&
-          std::is_trivially_destructible<GlobalState>::value,
-      "unsuitable for global state");
+      std::is_trivial<GlobalState>::value || kCpplibVer, "not trivial");
 
  public:
   FOLLY_EXPORT static GlobalState& state() {
@@ -384,21 +381,20 @@ class SimpleAllocator {
       return mem;
     }
 
-    if (mem_) {
-      // Bump-ptr allocation.
-      if (intptr_t(mem_) % 128 == 0) {
-        // Avoid allocating pointers that may look like malloc
-        // pointers.
-        mem_ += std::min(sz_, max_align_v);
-      }
-      if (mem_ + sz_ <= end_) {
-        auto mem = mem_;
-        mem_ += sz_;
-
-        assert(intptr_t(mem) % 128 != 0);
-        return mem;
-      }
+    // Bump-ptr allocation.
+    if (intptr_t(mem_) % 128 == 0) {
+      // Avoid allocating pointers that may look like malloc
+      // pointers.
+      mem_ += std::min(sz_, max_align_v);
     }
+    if (mem_ && (mem_ + sz_ <= end_)) {
+      auto mem = mem_;
+      mem_ += sz_;
+
+      assert(intptr_t(mem) % 128 != 0);
+      return mem;
+    }
+
     return allocateHard();
   }
   void deallocate(void* mem) {
@@ -478,9 +474,9 @@ class CoreRawAllocator {
     }
   };
 
-  Allocator& get(size_t stripe) {
+  Allocator* get(size_t stripe) {
     assert(stripe < Stripes);
-    return allocators_[stripe];
+    return &allocators_[stripe];
   }
 
  private:
@@ -490,9 +486,11 @@ class CoreRawAllocator {
 template <typename T, size_t Stripes>
 CxxAllocatorAdaptor<T, typename CoreRawAllocator<Stripes>::Allocator>
 getCoreAllocator(size_t stripe) {
-  using RawAllocator = CoreRawAllocator<Stripes>;
-  return CxxAllocatorAdaptor<T, typename RawAllocator::Allocator>(
-      detail::createGlobal<RawAllocator, void>().get(stripe));
+  // We cannot make sure that the allocator will be destroyed after
+  // all the objects allocated with it, so we leak it.
+  static Indestructible<CoreRawAllocator<Stripes>> allocator;
+  return CxxAllocatorAdaptor<T, typename CoreRawAllocator<Stripes>::Allocator>(
+      *allocator->get(stripe));
 }
 
 } // namespace folly

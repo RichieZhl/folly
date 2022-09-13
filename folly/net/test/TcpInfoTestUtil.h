@@ -24,6 +24,7 @@
 #include <folly/portability/GTest.h>
 
 namespace folly {
+namespace tcpinfo {
 namespace test {
 
 class TcpInfoTestUtil {
@@ -31,7 +32,7 @@ class TcpInfoTestUtil {
   /**
    * Mock to enable testing of socket buffer lookups.
    */
-  class MockIoctlDispatcher : public folly::TcpInfo::IoctlDispatcher {
+  class MockIoctlDispatcher : public folly::tcpinfo::TcpInfo::IoctlDispatcher {
    public:
     MockIoctlDispatcher() = default;
     virtual ~MockIoctlDispatcher() = default;
@@ -78,7 +79,8 @@ class TcpInfoTestUtil {
             IPPROTO_TCP,
             TCP_CONGESTION,
             testing::NotNull(),
-            testing::Pointee(testing::Eq(folly::TcpInfo::kLinuxTcpCaNameMax))))
+            testing::Pointee(
+                testing::Eq(folly::tcpinfo::TcpInfo::kLinuxTcpCaNameMax))))
         .WillOnce(testing::WithArgs<3, 4>(
             testing::Invoke([ccName](void* optval, socklen_t* optlen) {
               EXPECT_THAT(optlen, testing::Pointee(testing::Ge(ccName.size())));
@@ -87,8 +89,8 @@ class TcpInfoTestUtil {
                   ccName.end(),
                   ((std::array<
                        char,
-                       (unsigned int)folly::TcpInfo::kLinuxTcpCaNameMax>*)
-                       optval)
+                       (unsigned int)
+                           folly::tcpinfo::TcpInfo::kLinuxTcpCaNameMax>*)optval)
                       ->data());
               *optlen = std::min<socklen_t>(ccName.size(), *optlen);
               return 0;
@@ -98,7 +100,7 @@ class TcpInfoTestUtil {
   static void setupExpectCallCcInfo(
       folly::netops::test::MockDispatcher& mockDispatcher,
       const NetworkSocket& s,
-      const folly::TcpInfo::tcp_cc_info& ccInfo) {
+      const folly::tcpinfo::tcp_cc_info& ccInfo) {
     EXPECT_CALL(
         mockDispatcher,
         getsockopt(
@@ -106,7 +108,7 @@ class TcpInfoTestUtil {
             IPPROTO_TCP,
             TCP_CC_INFO,
             testing::NotNull(),
-            testing::Pointee(testing::Eq(sizeof(folly::TcpInfo::tcp_cc_info)))))
+            testing::Pointee(testing::Eq(sizeof(folly::tcpinfo::tcp_cc_info)))))
         .WillOnce(testing::WithArgs<3, 4>(
             testing::Invoke([ccInfo](void* optval, socklen_t* optlen) {
               auto copied = std::min((unsigned int)sizeof ccInfo, *optlen);
@@ -118,4 +120,5 @@ class TcpInfoTestUtil {
 };
 
 } // namespace test
+} // namespace tcpinfo
 } // namespace folly

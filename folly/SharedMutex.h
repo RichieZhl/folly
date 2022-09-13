@@ -252,8 +252,7 @@ struct SharedMutexToken {
 };
 
 struct SharedMutexPolicyDefault {
-  static constexpr uint32_t max_spin_count = 2;
-  static constexpr uint32_t max_soft_yield_count = 1;
+  static constexpr bool block_immediately = false;
   static constexpr bool track_thread_id = false;
   static constexpr bool skip_annotate_rwlock = false;
 };
@@ -337,11 +336,13 @@ class SharedMutexImpl : std::conditional_t<
                             shared_mutex_detail::ThreadIdOwnershipTracker,
                             shared_mutex_detail::NopOwnershipTracker> {
  private:
+  static constexpr bool BlockImmediately = Policy::block_immediately;
   static constexpr bool AnnotateForThreadSanitizer =
       kIsSanitizeThread && !ReaderPriority && !Policy::skip_annotate_rwlock;
+  static constexpr bool TrackThreadId = Policy::track_thread_id;
 
   typedef std::conditional_t<
-      Policy::track_thread_id,
+      TrackThreadId,
       shared_mutex_detail::ThreadIdOwnershipTracker,
       shared_mutex_detail::NopOwnershipTracker>
       OwnershipTrackerBase;
@@ -908,8 +909,11 @@ class SharedMutexImpl : std::conditional_t<
   static constexpr uint32_t kNumSharedToStartDeferring = 2;
 
   // The typical number of spins that a thread will wait for a state
-  // transition.
-  static constexpr uint32_t kMaxSpinCount = Policy::max_spin_count;
+  // transition.  There is no bound on the number of threads that can wait
+  // for a writer, so we are pretty conservative here to limit the chance
+  // that we are starving the writer of CPU.  Each spin is 6 or 7 nanos,
+  // almost all of which is in the pause instruction.
+  static constexpr uint32_t kMaxSpinCount = !BlockImmediately ? 1000 : 2;
 
   // The maximum number of soft yields before falling back to futex.
   // If the preemption heuristic is activated we will fall back before
@@ -917,7 +921,7 @@ class SharedMutexImpl : std::conditional_t<
   // to getrusage, with checks of the goal at each step).  Soft yields
   // aren't compatible with deterministic execution under test (unlike
   // futexWaitUntil, which has a capricious but deterministic back end).
-  static constexpr uint32_t kMaxSoftYieldCount = Policy::max_soft_yield_count;
+  static constexpr uint32_t kMaxSoftYieldCount = !BlockImmediately ? 1000 : 0;
 
   // If AccessSpreader assigns indexes from 0..k*n-1 on a system where some
   // level of the memory hierarchy is symmetrically divided into k pieces
@@ -1089,12 +1093,12 @@ class SharedMutexImpl : std::conditional_t<
       if ((state & goal) == 0) {
         return true;
       }
-      if (UNLIKELY(spinCount == kMaxSpinCount)) {
+      asm_volatile_pause();
+      ++spinCount;
+      if (UNLIKELY(spinCount >= kMaxSpinCount)) {
         return ctx.canBlock() &&
             yieldWaitForZeroBits(state, goal, waitMask, ctx);
       }
-      asm_volatile_pause();
-      ++spinCount;
     }
   }
 

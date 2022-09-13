@@ -39,8 +39,7 @@ using namespace std;
 using namespace std::chrono;
 
 struct DSharedMutexPolicy : SharedMutexPolicyDefault {
-  static constexpr uint32_t max_spin_count = 0;
-  static constexpr uint32_t max_soft_yield_count = 0;
+  static constexpr bool block_immediately = true;
 };
 using DSched = DeterministicSchedule;
 using DSharedMutexReadPriority =

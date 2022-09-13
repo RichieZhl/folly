@@ -20,7 +20,7 @@
 #include <cerrno>
 #include <utility>
 
-#include <fmt/fmt/core.h>
+#include <fmt/core.h>
 #include <glog/logging.h>
 
 #include <folly/Portability.h>

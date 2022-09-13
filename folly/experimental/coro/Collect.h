@@ -161,7 +161,7 @@ auto collectAllTry(SemiAwaitables&&... awaitables)
 //
 // The collectAllRange() function can be used to concurrently await a collection
 // of SemiAwaitable objects, returning a std::vector of the individual results
-// in the same order as the input once all operations have completed.
+// once all operations have completed.
 //
 // If any of the operations fail with an exception then requests cancellation of
 // any outstanding operations and the entire operation fails with an exception,
@@ -204,8 +204,11 @@ auto collectAllRange(InputRange awaitables) -> folly::coro::Task<void>;
 //
 // The collectAllTryRange() function can be used to concurrently await a
 // collection of SemiAwaitable objects and produces a std::vector of
-// Try<T> objects in the same order as the input once all of the input
-// operations have completed.
+// Try<T> objects once all of the input operations have completed.
+//
+// The element of the returned vector contains the result of the corresponding
+// input operation in the same order that they appeared in the 'awaitables'
+// sequence.
 //
 // The success/failure of individual results can be inspected by calling
 // .hasValue() or .hasException() on the elements of the returned vector.
@@ -242,80 +245,50 @@ using async_generator_from_awaitable_range_item_t = conditional_t<
 }
 
 ////////////////////////////////////////////////////////////////////////////
-// makeUnorderedAsyncGenerator(AsyncScope&,
+// makeUnorderedAsyncGeneratorFromAwaitableRange(AsyncScope&,
 // RangeOf<SemiAwaitable<T>>&&) -> AsyncGenerator<T&&>
-// makeUnorderedTryAsyncGenerator(AsyncScope&,
+// makeUnorderedAsyncGeneratorFromAwaitableTryRange(AsyncScope&,
 // RangeOf<SemiAwaitable<T>>&&) -> AsyncGenerator<Try<T>&&>
 
 // Returns an AsyncGenerator that yields results of passed-in awaitables in
 // order of completion.
 // Destroying or cancelling the AsyncGenerator cancels the remaining awaitables.
 //
-// makeUnorderedAsyncGenerator cancels all remaining
+// makeUnorderedAsyncGeneratorFromAwaitableRange cancels all remaining
 // awaitables when any of them fail with an exception. Any results obtained
 // before the failure are still returned via the generator, then the first
-// exception in time. makeUnorderedTryAsyncGenerator does not
+// exception in time. makeUnorderedAsyncGeneratorFromAwaitableTryRange does not
 // cancel awaitables when one fails, and yields all results even when cancelled.
 //
 // Awaitables are attached to the passed-in AsyncScope.
 
 template <typename InputRange>
-auto makeUnorderedAsyncGenerator(AsyncScope& scope, InputRange awaitables)
+auto makeUnorderedAsyncGeneratorFromAwaitableRange(
+    AsyncScope& scope, InputRange awaitables)
     -> AsyncGenerator<detail::async_generator_from_awaitable_range_item_t<
         InputRange,
         false>&&>;
 template <typename InputRange>
-auto makeUnorderedTryAsyncGenerator(AsyncScope& scope, InputRange awaitables)
+auto makeUnorderedAsyncGeneratorFromAwaitableTryRange(
+    AsyncScope& scope, InputRange awaitables)
     -> AsyncGenerator<detail::async_generator_from_awaitable_range_item_t<
         InputRange,
         true>&&>;
 
 template <typename SemiAwaitable>
-auto makeUnorderedAsyncGenerator(
+auto makeUnorderedAsyncGeneratorFromAwaitableRange(
     AsyncScope& scope, std::vector<SemiAwaitable> awaitables)
-    -> decltype(makeUnorderedAsyncGenerator(
+    -> decltype(makeUnorderedAsyncGeneratorFromAwaitableRange(
         scope, awaitables | ranges::views::move)) {
-  co_return co_await makeUnorderedAsyncGenerator(
+  co_return co_await makeUnorderedAsyncGeneratorFromAwaitableRange(
       scope, awaitables | ranges::views::move);
 }
 template <typename SemiAwaitable>
-auto makeUnorderedTryAsyncGenerator(
+auto makeUnorderedAsyncGeneratorFromAwaitableTryRange(
     AsyncScope& scope, std::vector<SemiAwaitable> awaitables)
-    -> decltype(makeUnorderedTryAsyncGenerator(
+    -> decltype(makeUnorderedAsyncGeneratorFromAwaitableTryRange(
         scope, awaitables | ranges::views::move)) {
-  co_return co_await makeUnorderedTryAsyncGenerator(
-      scope, awaitables | ranges::views::move);
-}
-
-// Can also be used with CancellableAsyncScope
-
-template <typename InputRange>
-auto makeUnorderedAsyncGenerator(
-    CancellableAsyncScope& scope, InputRange awaitables)
-    -> AsyncGenerator<detail::async_generator_from_awaitable_range_item_t<
-        InputRange,
-        false>&&>;
-template <typename InputRange>
-auto makeUnorderedTryAsyncGenerator(
-    CancellableAsyncScope& scope, InputRange awaitables)
-    -> AsyncGenerator<detail::async_generator_from_awaitable_range_item_t<
-        InputRange,
-        true>&&>;
-
-template <typename SemiAwaitable>
-auto makeUnorderedAsyncGenerator(
-    CancellableAsyncScope& scope, std::vector<SemiAwaitable> awaitables)
-    -> decltype(makeUnorderedAsyncGenerator(
-        scope, awaitables | ranges::views::move)) {
-  co_return co_await makeUnorderedAsyncGenerator(
-      scope, awaitables | ranges::views::move);
-}
-template <typename SemiAwaitable>
-auto makeUnorderedTryAsyncGenerator(
-    CancellableAsyncScope& scope, std::vector<SemiAwaitable> awaitables)
-    -> decltype(makeUnorderedTryAsyncGenerator(
-        scope, awaitables | ranges::views::move)) {
-  co_return co_await makeUnorderedTryAsyncGenerator(
+  co_return co_await makeUnorderedAsyncGeneratorFromAwaitableTryRange(
       scope, awaitables | ranges::views::move);
 }
 

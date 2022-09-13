@@ -337,14 +337,15 @@ void CoreBase::raise(exception_wrapper e) {
       FOLLY_FALLTHROUGH;
     }
     case InterruptHasHandler: { // invoke the stored handler
-      auto pointer = interrupt & ~InterruptMask;
       auto exchanged = interrupt_.compare_exchange_strong(
-          interrupt, pointer | InterruptTerminal, std::memory_order_relaxed);
+          interrupt, InterruptTerminal, std::memory_order_relaxed);
       if (!exchanged) { // ignore all calls after the first
         return;
       }
-      auto handler = reinterpret_cast<InterruptHandler*>(pointer);
+      auto handler =
+          reinterpret_cast<InterruptHandler*>(interrupt & ~InterruptHasHandler);
       handler->handle(e);
+      handler->release();
       return;
     }
     case InterruptHasObject: // ignore all calls after the first
@@ -359,21 +360,10 @@ void CoreBase::initCopyInterruptHandlerFrom(const CoreBase& other) {
   auto interrupt = other.interrupt_.load(std::memory_order_acquire);
   switch (interrupt & InterruptMask) {
     case InterruptHasHandler: { // copy the handler
-      auto pointer = interrupt & ~InterruptMask;
-      auto handler = reinterpret_cast<InterruptHandler*>(pointer);
+      auto handler =
+          reinterpret_cast<InterruptHandler*>(interrupt & ~InterruptHasHandler);
       handler->acquire();
-      interrupt_.store(
-          pointer | InterruptHasHandler, std::memory_order_release);
-      break;
-    }
-    case InterruptTerminal: { // copy the handler, if any
-      auto pointer = interrupt & ~InterruptMask;
-      auto handler = reinterpret_cast<InterruptHandler*>(pointer);
-      if (handler) {
-        handler->acquire();
-        interrupt_.store(
-            pointer | InterruptHasHandler, std::memory_order_release);
-      }
+      interrupt_.store(interrupt, std::memory_order_release);
       break;
     }
   }
@@ -411,23 +401,17 @@ CoreBase::CoreBase(State state, unsigned char attached)
 
 CoreBase::~CoreBase() {
   auto interrupt = interrupt_.load(std::memory_order_acquire);
-  auto pointer = interrupt & ~InterruptMask;
   switch (interrupt & InterruptMask) {
     case InterruptHasHandler: {
-      auto handler = reinterpret_cast<InterruptHandler*>(pointer);
+      auto handler =
+          reinterpret_cast<InterruptHandler*>(interrupt & ~InterruptHasHandler);
       handler->release();
       break;
     }
     case InterruptHasObject: {
-      auto object = reinterpret_cast<exception_wrapper*>(pointer);
+      auto object =
+          reinterpret_cast<exception_wrapper*>(interrupt & ~InterruptHasObject);
       delete object;
-      break;
-    }
-    case InterruptTerminal: {
-      auto handler = reinterpret_cast<InterruptHandler*>(pointer);
-      if (handler) {
-        handler->release();
-      }
       break;
     }
   }

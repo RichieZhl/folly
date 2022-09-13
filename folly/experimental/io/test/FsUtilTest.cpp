@@ -19,7 +19,7 @@
 #include <fstream>
 #include <random>
 
-#include <fmt/fmt/core.h>
+#include <fmt/core.h>
 #include <glog/logging.h>
 
 #include <folly/portability/GTest.h>

@@ -27,17 +27,20 @@ namespace detail {
 
 class UniqueInstance {
  public:
+#if __GNUC__ && __GNUC__ < 7 && !__clang__
+  explicit UniqueInstance(...) noexcept {}
+#else
   template <template <typename...> class Z, typename... Key, typename... Mapped>
   FOLLY_EXPORT FOLLY_ALWAYS_INLINE explicit UniqueInstance(
       tag_t<Z<Key..., Mapped...>>, tag_t<Key...>, tag_t<Mapped...>) noexcept {
-    static Ptr const tmpl = FOLLY_TYPE_INFO_OF(key_t<Z>);
-    static Ptr const ptrs[] = {
-        FOLLY_TYPE_INFO_OF(Key)..., FOLLY_TYPE_INFO_OF(Mapped)...};
+    static Ptr const tmpl = &typeid(key_t<Z>);
+    static Ptr const ptrs[] = {&typeid(Key)..., &typeid(Mapped)...};
     static Arg arg{
         {tmpl, ptrs, sizeof...(Key), sizeof...(Mapped)},
         {tag<Value, key_t<Z, Key...>>}};
     enforce(arg);
   }
+#endif
 
   UniqueInstance(UniqueInstance const&) = delete;
   UniqueInstance(UniqueInstance&&) = delete;

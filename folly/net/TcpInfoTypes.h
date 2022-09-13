@@ -27,7 +27,7 @@
 #endif
 
 namespace folly {
-namespace detail {
+namespace tcpinfo {
 
 /**
  *
@@ -222,5 +222,5 @@ union tcp_cc_info {
 };
 #endif
 
-} // namespace detail
+} // namespace tcpinfo
 } // namespace folly

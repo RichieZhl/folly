@@ -292,15 +292,16 @@ class FOLLY_NODISCARD AsyncGenerator {
       }
     }
 
-    folly::Try<NextResult> await_resume_try() {
+    folly::Try<Value> await_resume_try() {
+      folly::Try<Value> result;
       if (coro_) {
         if (coro_.promise().hasValue()) {
-          return folly::Try<NextResult>(NextResult{coro_});
+          result.emplace(coro_.promise().getRvalue());
         } else if (coro_.promise().hasException()) {
-          return folly::Try<NextResult>(coro_.promise().getException());
+          result.emplaceException(coro_.promise().getException());
         }
       }
-      return folly::Try<NextResult>(NextResult{});
+      return result;
     }
 
    private:
@@ -349,8 +350,8 @@ class FOLLY_NODISCARD AsyncGenerator {
   friend AsyncGenerator tag_invoke(
       tag_t<co_invoke_fn>, tag_t<AsyncGenerator, F, A...>, F_ f, A_... a) {
     auto r = invoke(static_cast<F&&>(f), static_cast<A&&>(a)...);
-    while (true) {
-      co_yield co_result(co_await co_awaitTry(r.next()));
+    while (auto v = co_await r.next()) {
+      co_yield std::move(v).value();
     }
   }
 
@@ -468,23 +469,6 @@ class AsyncGeneratorPromise {
     }
   }
 
-  YieldAwaiter yield_value(
-      co_result<typename AsyncGenerator<Reference, Value>::NextResult>&&
-          res) noexcept {
-    DCHECK(res.result().hasValue() || res.result().hasException());
-    if (res.result().hasException()) {
-      return yield_value(co_error(res.result().exception()));
-    } else if (res.result().hasValue()) {
-      if (res.result()->has_value()) {
-        return yield_value(std::move(res.result()->value()));
-      } else {
-        return_void();
-        return {};
-      }
-    }
-    return yield_value(co_error(UsingUninitializedTry{}));
-  }
-
   variant_awaitable<YieldAwaiter, ready_awaitable<>> await_transform(
       co_safe_point_t) noexcept {
     if (cancelToken_.isCancellationRequested()) {
@@ -522,8 +506,7 @@ class AsyncGeneratorPromise {
 
   void setCancellationToken(folly::CancellationToken cancelToken) noexcept {
     // Only keep the first cancellation token.
-    // ie. the inner-most cancellation scope of the consumer's calling
-    // context.
+    // ie. the inner-most cancellation scope of the consumer's calling context.
     if (!hasCancelTokenOverride_) {
       cancelToken_ = std::move(cancelToken);
       hasCancelTokenOverride_ = true;

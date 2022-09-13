@@ -17,7 +17,6 @@
 #pragma once
 
 #include <folly/io/async/AsyncSocket.h>
-#include <folly/io/async/AsyncSocketException.h>
 #include <folly/portability/GMock.h>
 
 namespace folly {
@@ -38,8 +37,6 @@ class MockAsyncSocketLifecycleObserver : public AsyncSocket::LifecycleObserver {
   MOCK_METHOD1(destroyMock, void(AsyncTransport*));
   MOCK_METHOD1(closeMock, void(AsyncTransport*));
   MOCK_METHOD1(connectMock, void(AsyncTransport*));
-  MOCK_METHOD2(
-      connectErrorMock, void(AsyncTransport*, const AsyncSocketException&));
   MOCK_METHOD2(evbAttachMock, void(AsyncTransport*, EventBase*));
   MOCK_METHOD2(evbDetachMock, void(AsyncTransport*, EventBase*));
   MOCK_METHOD2(
@@ -51,7 +48,6 @@ class MockAsyncSocketLifecycleObserver : public AsyncSocket::LifecycleObserver {
 
   // additional handlers specific to AsyncSocket::LifecycleObserver
   MOCK_METHOD1(fdDetachMock, void(AsyncSocket*));
-  MOCK_METHOD1(fdAttachMock, void(AsyncSocket*));
   MOCK_METHOD2(moveMock, void(AsyncSocket*, AsyncSocket*));
 
  private:
@@ -64,10 +60,6 @@ class MockAsyncSocketLifecycleObserver : public AsyncSocket::LifecycleObserver {
   void destroy(AsyncTransport* trans) noexcept override { destroyMock(trans); }
   void close(AsyncTransport* trans) noexcept override { closeMock(trans); }
   void connect(AsyncTransport* trans) noexcept override { connectMock(trans); }
-  void connectError(
-      AsyncTransport* trans, const AsyncSocketException& ex) noexcept override {
-    connectErrorMock(trans, ex);
-  }
   void evbAttach(AsyncTransport* trans, EventBase* eb) noexcept override {
     evbAttachMock(trans, eb);
   }
@@ -87,7 +79,6 @@ class MockAsyncSocketLifecycleObserver : public AsyncSocket::LifecycleObserver {
     byteEventsUnavailableMock(trans, ex);
   }
   void fdDetach(AsyncSocket* sock) noexcept override { fdDetachMock(sock); }
-  void fdAttach(AsyncSocket* sock) noexcept override { fdAttachMock(sock); }
   void move(AsyncSocket* olds, AsyncSocket* news) noexcept override {
     moveMock(olds, news);
   }
